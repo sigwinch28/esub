@@ -1,0 +1,19 @@
+{application, esub,
+ [{description, "An escript"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, [esub,
+	     esub_type,
+	     esub_guard,
+	     esub_core
+	    ]},
+
+  {maintainers, []},
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.
