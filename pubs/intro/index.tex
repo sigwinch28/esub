@@ -1,0 +1,477 @@
+\documentclass[nonacm,timestamp,manuscript]{acmart}
+\usepackage{amsmath}
+\usepackage{semantic}
+\usepackage{minted}
+\usepackage{mathpartir}
+\usepackage{stmaryrd}
+\usepackage{amssymb}
+\usepackage{todonotes}
+\usepackage{chngcntr}
+\setmonofont[Scale=0.8]{DejaVu Sans Mono}
+
+\newcommand{\alt}{\ |\ }
+\newcommand{\atom}[1]{\texttt{#1}}
+\newcommand{\tuple}{\{ T_1, \ldots, T_n \}}
+\newcommand{\singleton}[2]{\langle #1, #2 \rangle} % chktex 1
+\newcommand{\singletonex}{\singleton{T}{v}}
+\newcommand{\type}{\text{T}}
+\newcommand{\types}{\text{S}}
+\newcommand{\atomtype}{{\type}^{*}}
+\newcommand{\postype}{{\type}^{+}}
+\newcommand{\postypes}{{\types}^{+}}
+\newcommand{\posstype}{{\type}^{+\text{S}}}
+\newcommand{\posstypes}{{\types}^{+\text{S}}}
+\newcommand{\posctype}{{\type}^{+\text{C}}}
+\newcommand{\negtype}{{\type}^{-}}
+\newcommand{\res}[1]{\texttt{#1}}
+
+\counterwithin*{equation}{section}
+\counterwithin*{equation}{subsection}
+
+\title{Typing Erlang Clauses with Flow Typing}
+\author{Joseph Harrison}
+\affiliation{%
+  \department{School of Computing}
+  \institution{University of Kent}
+  \city{Canterbury}
+  \country{United Kingdom}}
+\email{jrh53@kent.ac.uk}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\section{Types}
+
+\begin{align*}
+  \type ::={}&
+               \atom{any} \alt
+               \atom{atom} \alt \atom{boolean} \alt
+               \atom{number} \alt \atom{integer} \alt
+               \atom{tuple} \alt \tuple \alt
+               \singletonex \alt
+               \neg \type \alt
+               {\type}_1 \lor {\type}_2 \alt {\type}_1 \land {\type}_2
+\end{align*}
+
+First, we have some types which are analogous to their Erlang cousins:
+\atom{any}, \atom{atom}, \atom{boolean} (the atom values \texttt{true} and
+\texttt{false}), \atom{number}, and \atom{integer}. There are also two types for
+tuples: \atom{tuple} for tuples of an unknown size, and $\tuple$ for those with
+one which is known. Those familiar with Erlang's type system will know of
+singleton types, even if they are not aware of the name: a concrete value used
+as a type. Here, $\singletonex$ represents a singleton of type $T$ with value
+$v$.
+
+The type $\neg \type$ represents the negation of a type. The union of (or choice
+between) two types is noted as ${\type}_1 \lor {\type}_2$; this is seen in
+Erlang as a vertical bar, as in ${\type}_1 | {\type}_2$. Finally, we have the
+intersection of two types, written ${\type}_1 \land {\type}_2$.
+
+
+\section{Language}
+
+\subsection{Guards}
+
+\begin{align*}
+  g &{}::= \res{true} \alt \res{false} \alt \res{not}\ g \alt
+      \res{if}\ g\ \res{then}\ g_t\ \res{else}\ g_f \alt
+      v\ \res{is}\ T \alt v\ \res{=:=}\ l
+\end{align*}
+
+Our guards represent a subset of those in Erlang, and all of them evaluate to
+either \res{true} or \res{false}, which represent success and failure,
+respectively. The value of a guard is negated via the \res{not} keyword. The
+binary boolean operators \res{and}/\res{andalso} do not exist; they are
+implemented via the \res{if}/\res{then}/\res{else} construct. We can also check
+whether a variable $v$ has type $T$ via the type check $v\ \res{is}\ T$,
+returning. Finally, we can check that a variable $v$ is equal to an Erlang
+literal $l$ via $v\ \res{=:=}\ l$.
+
+\begin{definition}[Guard Evaluation]
+
+\newcommand{\Gden}[2][\rho]{gval(#2,#1)} % chktex 36
+
+Guards are interpreted via the $\Gden{\cdot}$ function in an
+environment $\rho : v \rightharpoonup l$ which is a partial map from variable names to literal
+values.
+
+
+
+\begin{align*}
+  \Gden{\res{true}
+  } ={}&
+         true
+  && \textsc{GvalTrue} \\
+  \Gden{\res{false}
+  } ={}&
+         false
+  && \textsc{GvalFalse} \\
+  \Gden{\res{if}\ g\ \res{then}\ g_t\ \res{else}\ g_f
+  } ={}&
+         \begin{cases}
+           \Gden{g_t} & \text{if}\ \Gden{g} = true\\
+           \Gden{g_f} & \text{if}\ \Gden{g} = false
+         \end{cases}
+  && \textsc{GvalIf} \\
+  \Gden{v\ \res{is}\ T
+  } ={}&
+         \begin{cases}
+           true & \text{if}\ v \in dom(\rho)\ \text{and}\ \rho(v) : S\ \text{and}\ T \le S \\
+           false & \text{otherwise}
+         \end{cases}
+  && \textsc{GvalIs} \\
+  \Gden{v\ \res{=:=}\ l
+  } ={}&
+         \begin{cases}
+           true & \text{if}\ v \in dom(\rho)\ \text{and}\ \rho(v) =:= l \\
+           false & otherwise
+         \end{cases}
+  && \textsc{GvalEq}          
+\end{align*}
+\end{definition}
+
+The evaluation of a guard results in a logical $true$ or $false$ value, meaning
+success or failure respectively. \textsc{GTrue} and \textsc{GFalse} simply
+evaluate to their logical values, and \textsc{GIf} also behaves typically.
+The \textsc{GIs} rule performs type checks on a variable: when $v$ is in the
+domain of $\rho$, this returns $true$ if the type of $\rho(v)$ is a supertype of $T$.
+Recall from rule \textsc{S-Refl} that the sub-typing relation is reflexive, and
+that \textsc{GIs} therefore also evaluates to $true$ when the type of $\rho(v)$ is
+identical to $T$. The equality check in \textsc{GEq} returns true when $v$ is
+in the domain of $\rho$, and its value is equal to the literal $l$ via Erlang's
+$=:=$ operator.
+
+\subsection{Generating Type Environments}
+
+\newcommand{\Gden}[2][\Gamma{}s]{{G \llbracket{} #2 \rrbracket{}}_{#1}}
+
+\begin{definition}[Environment Generation]
+
+We generate a \textit{set} of type environments for a guard via the
+$\Gden{\cdot}$ function.
+\begin{align*}
+  \Gden{\res{true}
+  } ={}&
+         \left\{
+         \lambda x . \Gamma(x) \land \atom{any}
+         \ \middle|\
+         \Gamma \in \Gamma{}s
+         \right\}
+  && \textsc{GTrue} \\
+  \Gden{\res{false}
+  } ={}&
+         \left\{
+         \lambda x . \Gamma(x) \land \atom{none}
+         \ \middle|\ 
+         \Gamma \in \Gamma{}s
+         \right\}
+  && \textsc{GFalse} \\
+  \Gden{\res{not}\ g
+  } ={}&
+         \left\{
+         \lambda x . \neg \Gamma(x)
+         \ \middle|\
+         \Gamma \in \Gamma{}s
+         \right\}
+  && \textsc{GNot} \\
+  \Gden{\res{if}\ g\ \res{then}\ g_t\ \res{else}\ g_f
+  } ={}& 
+         \Gden[\Gamma_g]{g_t} \cup \Gden[\Gamma_{\neg g}]{g_f}
+  && \textsc{GIf} \\
+       & \text{where}\ \Gamma_g = \Gden{g}\ 
+         \text{and}\ \Gamma_{\neg g} = \left\{ \lambda x . \neg \Gamma(x)\ \middle|\ \Gamma \in \Gden{g} \right\} \\
+  \Gden{v\ \res{is}\ T
+  } ={}&
+         \left\{
+         \lambda x . \text{if}\ x = v\ \text{then}\ \Gamma(x) \land T\ \text{else}\ \Gamma(x)
+         \ \middle|\ 
+         \Gamma \in \Gamma{}s
+         \right\}
+  && \textsc{GIs} \\
+  \Gden{v\ \res{=:=}\ l
+  } ={}&
+         \left\{
+         \lambda x . \text{if}\ x = v\ \text{then}\ \Gamma(x) \land \singleton{type(l)}{l}\ \text{else}\ \Gamma(x)
+         \ \middle|\
+         \Gamma \in \Gamma{}s
+         \right\} 
+  && \textsc{GEq}
+\end{align*}
+\end{definition}
+
+If we were to use the definition of~\cite{Pearce2013}, we would get a single
+$\Gamma$ with union types, which would result in an over-approximation.
+
+\todo[inline]{this needs a lot of complicated explanation that's hard to put
+  down in a notation that makes sense to me}
+
+
+\subsection{Patterns}
+\begin{align*}
+  p &{}::= v \alt l \alt \{ p_1, \ldots, p_n \} \alt p = v
+\end{align*}
+
+Patterns may be simply free variables ($v$), a tuple of patterns
+($\{ p_1, \ldots, p_n \}$), or an alias to an existing pattern ($p = v$). Variables
+names must be distinct in patterns, and all variable names are free.
+
+\newcommand{\Pden}[2][\Gamma]{{P\llbracket{} #2 \rrbracket{}}_{#1}}
+\begin{definition}[Pattern Types]
+\begin{align*}
+  \Pden{v
+  } ={}& \Gamma(v)
+  && \textsc{PVar} \\
+  \Pden{l
+  } ={}& \singleton{type(l)}{l}
+  && \textsc{PLit} \\
+  \Pden{ \{ p_1, \ldots, p_n\}
+  } ={}& \{ \Pden{p_1}, \ldots, \Pden{p_n} \}
+  && \textsc{PTuple} \\
+  \Pden{p = v
+  } ={}& \Pden{p} \land \Gamma(v)
+  && \textsc{PAlias}
+\end{align*}
+\end{definition}
+
+\subsection{Clauses}
+
+A clause consists of a pattern paired with a guard.
+\begin{align*}
+  c ::= p\ \res{when}\ g
+\end{align*}
+
+\newcommand{\Cden}[2][\Gamma]{{C \llbracket{} #2 \rrbracket}_{#1}}
+
+\begin{definition}[Clause Types]
+
+  \begin{align*}
+    \Cden{p\ \res{when}\ g} = \left\{ \Pden[\Gamma^{\prime}]{p}\ \middle|\ \Gamma^{\prime} \in \Gden[\Gamma]{g} \right\}
+  \end{align*}
+\end{definition}
+
+\begin{definition}[Clause Types]
+\end{definition}
+
+
+\section{Type Atoms}
+
+
+\begin{definition}[Type Atoms]
+  A type atom is an indivisible type which is either positive
+  ($\postype$), or the negation thereof ($\negtype$).
+
+\begin{align*}
+  \atomtype ::={}& \postype \alt \negtype \\
+  \postype ::={}& \posstype \alt \posctype \\
+  \posstype ::={}& \atom{any} \alt \atom{atom} \alt \atom{boolean} \alt
+                   \atom{number} \alt \atom{integer} \\
+  \posctype ::={}& \atom{tuple} \alt \{ {\postype}_{1}, \ldots, {\postype}_{n} \}
+                   \alt \singleton{\posstype}{v} \\
+  \negtype ::={}& \neg \postype
+\end{align*}
+\end{definition}
+
+The Erlang datatypes of \atom{any}, \atom{atom}, etc.\ are positive simple types
+(i.e.\ they are not compound, $\posstype$), while tuple types and singletons are
+considered complex ($\posctype$). Our introduction of singleton types slightly
+complicates the definition of type atoms over \citeauthor{Pearce2013}: we want
+singletons to only contain simple positive types, so they must be defined
+alongside the compound datatypes. This definition prevents tuples from
+containing negative types, while also forbidding singletons containing
+negative or compound types. Finally, there is no direct representation of the
+\atom{none} type: the notation $\neg \atom{any}$ is used synonymously.
+
+\subsection{Subtyping Relation}
+
+\begin{mathpar}
+  \inferrule* [right=S-Refl]
+  { }
+  { \postype \le \postype } % chktex 1
+
+  \inferrule* [right=S-Any]
+  { }
+  { \postype \le \atom{any} } % chktex 1
+
+  \inferrule* [right=S-Boolean]
+  { }
+  { \atom{boolean} \le \atom{atom} } % chktex 1
+
+  \inferrule* [right=S-Integer]
+  { }
+  { \atom{integer} \le \atom{number} } \\ % chktex 1
+
+  \inferrule* [right=S-Singleton1]
+  { \posstypes \le \postype\\ % chktex 1
+    v : \posstypes } % chktex 1 % chktex 26
+  { \singleton{\posstypes}{v} \le \postype } % chktex 1
+
+  \inferrule* [right=S-Singleton2]
+  { \posstypes \le \posstype\\ % chktex 1
+    v =:= w }
+  { \singleton{\posstypes}{v} \le \singleton{\posstype}{w} } \\ % chktex 1
+    
+  \inferrule* [right=S-Tuple1]
+  { }
+  { \{ \postype[1], \ldots, \postype[n] \} \le \atom{tuple} } % chktex 1
+
+  \inferrule* [right=S-Tuple2]
+  { \postypes[1] \le \postype[n] \\ % chktex 1
+    \cdots \\ % chktex 11
+    \postypes[n] \le \postype[n] } % chktex 1
+  { \{ \postypes[1] \ldots, \postypes[n] \} \le \{ \postype[1], \ldots, \postype[n] \} } % chktex 1
+\end{mathpar}
+
+We only define subtyping over positive type atoms, as per~\cite{Pearce2013}.
+This relation is easy to define. All positive type atoms are subtypes of
+themselves (\textsc{S-Refl}), and \atom{any} is at the top of the type
+hierarcy (\textsc{S-Any}). Next, the axioms of Erlang's type system are encoded,
+cementing the relation between simple positive type atoms (\textsc{S-Boolean},
+\textsc{S-Integer}). Following up quickly behind, we allow these types to
+be restricted to specific values via the instantiation of a singleton via
+\textsc{S-Singleton1}. Singletons can be compared to oneanother via
+\textsc{S-Singleton2}, which ensures that the sub-typing relation holds, and
+that the values are equal via Erlang's $=:=$ operator. We prefer $=:=$ over
+$==$ as the latter performs type conversion between integers and floats, which
+is unwanted behaviour. The \atom{tuple} type can be restricted to a tuple of
+a specific number of elements via \textsc{S-Tuple1}, that is to say a tuple with
+$n$ elements is a subtype of a tuple with any number of elements. Finally, the
+relation distributes across tuples, maintaining the size, order, and types of
+elements (\textsc{S-Tuple2}).
+
+\subsection{Intersection}
+
+We take a gigantic shortcut here:
+
+\begin{definition}[Positive Type Intersection]
+\begin{align*}
+  \postypes \sqcap \postype =
+  \begin{cases}
+    \postypes & \text{if}\ \postypes \le \postype \\
+    \postype & \text{if}\ \postype \le \postypes \\
+    \atom{none} & \text{otherwise}
+  \end{cases}
+\end{align*}
+\end{definition}
+
+This avoids the longer algorithmic definition of intersection seen
+in~\cite{Pearce2013}, which is equivalent.
+
+\section{Normalisation and Canonicalisation}
+
+\newcommand{\rewrite}{\Longrightarrow}
+
+\subsection{Disjunctive Normal Form}
+
+\begin{definition}[Disjunctive Normal Form]\label{def:dnf}
+\begin{alignat}{2}
+  & \neg \neg T && \rewrite T \\
+  & \neg (S \lor T) && \rewrite (\neg S) \land (\neg T) \\
+  & \neg (S \land T) && \rewrite (\neg S) \lor (\neg T) \\
+  & (S \lor T) \land U && \rewrite (S \land U) \lor (T \land U) \\
+  & \{ \ldots, S \lor T, \ldots \} && \rewrite \{ \ldots, S, \ldots \} \lor \{ \ldots, T, \ldots \} \\
+  & \{ \ldots, S \land T, \ldots \} && \rewrite \{ \ldots, S, \ldots \} \land \{ \ldots, T, \ldots \} \\
+  & \{\ldots \neg T, \ldots \} && \rewrite \{ \ldots, \atom{any} , \ldots \} \land \neg \{ \ldots, T, \ldots \}
+\end{alignat}
+
+$DNF(T) = T \rewrite^{*} T^{\prime}$ such that no more rewrite rules
+apply~\cite{Pearce2013}.
+\end{definition}
+
+\subsection{Conjunct Canonicalisation}
+
+\begin{definition}[Conjunct Canonicalisation]\label{def:can}
+  \begin{alignat}{3}
+    & \atom{none} \land T && \rewrite \atom{none} \\
+    & \postypes \land \postype && \rewrite \postypes \sqcap \postype \\
+    & \postypes \land (\neg \postype) && \rewrite \atom{none} && \quad \text{if}\ \postypes \le \postype \\
+    &                              && \rewrite \postypes && \quad \text{if}\ \postypes \sqcap \postype = \atom{none} \\
+    &                              && \rewrite \postypes \land \neg (\postypes \sqcap \postype) && \quad \text{if}\ \postype \nleq \postypes \\
+    & (\neg \postypes) \land (\neg \postype) && \rewrite \neg \postypes && \quad \text{if}\ \postype \le \postypes
+\end{alignat}
+
+$CAN(T) = T \rewrite^{*} T^{\prime}$ such that no more rewrite rules
+apply~\cite{Pearce2013}.
+\end{definition}
+
+\begin{definition}[Enhanced Disjunctive Normal Form]
+\begin{align*}
+  {DNF}^{+}(T) = CAN(DNF(T))
+\end{align*}
+\end{definition}
+
+\section{A Complete Subtyping Relation}
+
+\begin{align*}
+\end{align*}
+
+\section{Implementation}
+
+\subsection{Exhaustive Rewriting}
+  
+We define a bottom-up mapping over types, where $F : T \rightarrow T$.
+
+\begin{align*}
+  map(F, \atom{any}) ={}& F(\atom{any}) \\
+  map(F, \atom{atom}) ={}& F(\atom{atom}) \\
+  map(F, \atom{boolean}) ={}& F(\atom{boolean}) \\
+  map(F, \atom{number}) ={}& F(\atom{number}) \\
+  map(F, \atom{integer}) ={}& F(\atom{integer}) \\
+  map(F, \atom{tuple}) = {}& F(\atom{tuple}) \\
+  map(F, \singleton{T}{v}) ={}& F(\singleton{map(F, T)}{v}) \\
+  map(F, \{ T_1, \ldots, T_n \}) ={}& F( \{ map(F, T_1), \ldots, map(F, T_n) \}) \\
+  map(F, \neg T) ={}& F(\neg map(F, T)) \\
+  map(F, S \lor T) ={}& F(map(F, S) \lor map(F, T)) \\
+  map(F, S \land T) ={}& F(map(F, S) \land map(F, T))
+\end{align*}
+
+
+Rewriting of terms for DNF (Definition~\ref{def:dnf}) and CAN
+(Definition~\ref{def:can}) requires that rules be applied to the type until no
+more apply. This can be achieved by recursively picking redexes of the type
+and repeatedly applying a single-step rewriting function until the result does
+not change. Naively, this can be achieved by repeatedly mapping the single-step
+rewriting function over the type until the result of mapping is unchanged.
+
+\begin{align*}
+  rewrite(F, T) ={}&
+                     \begin{cases}
+                       T & \text{if}\ map(F, T) = T \\
+                       rewrite(F, map(F, T)) & \text{otherwise}
+                     \end{cases}
+\end{align*}
+
+Therefore $T \rewrite^{*} T^{\prime}$ such that no more rewrite rules apply is
+equivalently $rewrite(\rewrite, T)$.
+
+\todo[inline]{do we need to do this? should we not just map rewrite over the
+  type? I don't think so. We're pushing things \textit{down} the tree as well
+  as up, so I think we might need to re-visit already re-written redexes}
+
+\subsection{Singleton Construction}
+
+The construction of a singleton type $\singletonex$ requires that we know the
+type of the Erlang term $v$. As Erlang's type system is dynamic, we construct
+a function which determines the type of a term via guard evaluation. Note that if
+$S \le T$, then the function clause for typing terms of $S$ must come before the
+clause for $T$, as function clauses are considered in order:
+
+\begin{minted}[autogobble]{erlang}
+  type_of(X) when is_boolean(X) -> t_boolean();
+  type_of(X) when is_atom(X)    -> t_atom();
+  type_of(X) when is_integer(X) -> t_integer();
+  type_of(X) when is_number(X)  -> t_number();
+\end{minted}
+
+This allows for easy construction of a singleton:
+\begin{minted}[autogobble]{erlang}
+  t_singleton(T) -> #t_singleton{type=type_of(T),value=T}.
+\end{minted}
+
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{intro}
+
+\end{document}
