@@ -11,7 +11,7 @@
 
 \newcommand{\alt}{\ |\ }
 \newcommand{\atom}[1]{\texttt{#1}}
-\newcommand{\tuple}{\{ T_1, \ldots, T_n \}}
+\newcommand{\tuple}[1][T]{\left\{ {#1}_1, \ldots, {#1}_n \right\}}
 \newcommand{\singleton}[2]{\langle #1, #2 \rangle} % chktex 1
 \newcommand{\singletonex}{\singleton{T}{v}}
 \newcommand{\type}{\text{T}}
@@ -234,16 +234,18 @@ guard via \textsc{GNot} flips the pair from the guard it wraps: it succeeds in
 all cases the sub-guard fails, and vice versa.
 
 Conditional statements are the most complex, as multiple control flow paths can
-be taken to success or failure of the entire guard (rule \textsc{GIf}). Each of
-$g_t$ and $g_f$ may succeed or fail, but the selection of these depends on the
-success or failure of $g$ respectively. Ultimately, the guard succeeds whenever
-$g_t$ or $g_f$ does, and fails similarly. We must therefore consider four
-situations: when $g$ succeeds, $g_t$ either succeeds or fails, and when $g$
-fails, $g_f$ either succeeds or fails. In each case, we combine the results of
-the control flows, taking the join ($\Join$) of the corresponding branches. We do
-not follow the definition of~\cite{Pearce2013} for $\res{if}$ statements which
-are both restrictive and create an over-approximation of the typing environment.
-The trade-off is space: many more environments must be stored in a set.
+be taken. Each of $g_t$ and $g_f$ may succeed or fail, but the selection of
+these depends on the success or failure of $g$ respectively. Ultimately, the
+guard succeeds whenever $g_t$ or $g_f$ does, and fails similarly. We must
+therefore consider four situations: when $g$ succeeds, $g_t$ either succeeds or
+fails, and when $g$ fails, $g_f$ either succeeds or fails. In each case, we
+combine the results of the control flows, taking the join ($\Join$) of the
+corresponding branches. We do not follow the definition of~\cite{Pearce2013} for
+$\res{if}$ statements which are both restrictive and create an
+over-approximation of the typing environment.
+
+Type assertions (\textsc{GIs}) and equality checks (\textsc{GEq}) are much more
+straightforward: they succeed when the test passes, and fail when it does not.
 
 \begin{example}[Idempotency of $\res{if}$]
     \begin{align*}
@@ -464,18 +466,35 @@ elements (\textsc{S-Tuple2}).
 We take a gigantic shortcut here:
 
 \begin{definition}[Positive Type Intersection]
-\begin{align*}
-  \postypes \sqcap \postype =
-  \begin{cases}
-    \postypes & \text{if}\ \postypes \le \postype \\
-    \postype & \text{if}\ \postype \le \postypes \\
-    \atom{none} & \text{otherwise}
-  \end{cases}
-\end{align*}
+  \newcommand{\intersect}{\sqcap}
+  \begin{align}
+    \postype \intersect \postype & = \postype \label{eqn:irefl} \\
+    \postypes \intersect \atom{any} & = \postypes \label{eqn:iany} \\
+    \atom{boolean} \intersect \atom{atom} & = \atom{boolean} \label{eqn:ibool} \\
+    \atom{integer} \intersect \atom{number} & = \atom{integer} \label{eqn:iint} \\
+    \left\{ {\postypes}_1, \ldots, {\postypes}_n \right\} \intersect \left\{ {\postype}_1, \ldots, {\postype}_m \right\}
+                                   & = \begin{cases}
+                                     \atom{none} & \text{if}\ n \ne m \\
+                                     \atom{none} & \text{if}\ \exists{} i . {\postypes}_i \intersect {\postype}_i = \atom{none} \\
+                                     \left\{ {\postypes}_1 \intersect {\postype}_1, \ldots, {\postypes}_n \intersect {\postype}_n \right\} & \text{otherwise}
+                                   \end{cases} \label{eqn:ituple} \\
+    \singleton{\postypes}{v} \intersect \singleton{\postype}{w}
+                                    & = \begin{cases}
+                                      \atom{none} & \text{if}\ v\ \res{=/=}\ w \\
+                                      \atom{none} & \text{if}\ \postypes \intersect \postype = \atom{none} \\
+                                      \singleton{\postypes \intersect \postype}{v} & \text{otherwise}
+                                    \end{cases} \label{eqn:isingle1} \\
+    \singleton{\postypes}{v} \intersect \postype
+                                 & = \begin{cases}
+                                   \atom{none} & \text{if}\ \postypes \intersect \postype = \atom{none} \\
+                                   \singleton{\postypes \intersect \postype}{v} & \text{otherwise}
+                                   \end{cases} \label{eqn:isingle2}                                                                                     
+  \end{align}
 \end{definition}
+The rules are tried in order, from top to bottom. If no rule matches, the result
+is $\atom{none}$. Rules~\ref{eqn:iany},~\ref{eqn:ibool},~\ref{eqn:iint}
+and~\ref{eqn:isingle2} are symmetric.
 
-This avoids the longer algorithmic definition of intersection seen
-in~\cite{Pearce2013}, which is equivalent.
 
 \section{Normalisation and Canonicalisation}
 
