@@ -11,7 +11,8 @@
 -export([dnf/1,intersect/2,subtype/2,is_dnf/1,canon/1]).
 
 -export_type([t_any/0,t_atom/0,t_boolean/0,t_number/0,t_integer/0,
-	      t_tuple/1,t_singleton/0,t_not/0,t_or/0,t_and/0,type/0]).
+	      t_tuple/1,t_singleton/0,t_not/0,t_or/0,t_and/0,atomic/0,
+	      type/0]).
 
 
 -define(ANN_ELEM, 2).
@@ -331,7 +332,6 @@ eq(Type1, Type2) ->
     strip(Type1) =:= strip(Type2).
 
 rewrite(F, Step0) ->
-    io:format("Type: ~p~n", [Step0]),
     Step1 = fold(F, Step0),
     case eq(Step0,Step1) of
 	true -> 
@@ -487,20 +487,72 @@ canon1_neg(Type1, Type2, Orig) ->
 		    end
 	    end
     end.
-			    
-			    
-			
-		    
-	    
     
-	     
-	    
 %% Subtyping is defined for datatypes only. not negation/conj/disj types.
 -spec intersect(type(), type()) -> {ok, type()} | none.
 intersect(T1, T2) ->
-    case subtype(T1, T2) of
-	none -> subtype(T2, T1);
-	Res -> Res
+    case {name(T1),name(T2)} of
+	{_, any} -> {ok, T1};
+	{any, _} -> {ok, T2};
+	{boolean, atom} -> {ok, T1};
+	{atom, boolean} -> {ok, T2};
+	{integer, number} -> {ok, T1};
+	{number, integer} -> {ok, T2};
+	{tuple, tuple} ->
+	    case elems_intersect(tuple_types(T1), tuple_types(T2)) of
+		{ok, Ts} ->
+		    {ok, t_tuple(Ts)};
+		none ->
+		    none
+	    end;
+	{singleton, singleton} ->
+	    case singleton_value(T1) =:= singleton_value(T2) of
+		true ->
+		    case intersect(singleton_type(T1), singleton_type(T2)) of
+			{ok, T} ->
+			    {ok, t_singleton(T, singleton_value(T1))};
+			none ->
+			    none
+		    end;
+		false ->
+		    none
+	    end;
+	{singleton, _} ->
+	    case intersect(singleton_type(T1), T2) of
+		{ok, T} ->
+		    {ok, t_singleton(T, singleton_value(T1))};
+		none ->
+		    none
+	    end;
+	{_, singleton} ->
+	    case intersect(T1, singleton_type(T2)) of
+		{ok, T} ->
+		    {ok, t_singleton(T, singleton_value(T2))};
+		none ->
+		    none
+	    end;
+	_ ->
+	    case eq(T1, T2) of
+		true ->
+		    {ok, T1};
+		false ->
+		    none
+	    end
+    end.
+	    
+
+elems_intersect(undefined, undefined) ->
+    {ok, undefined};
+elems_intersect(Xs, undefined) ->
+    {ok, Xs};
+elems_intersect(undefined, Ys) ->
+    {ok, Ys};
+elems_intersect(Xs, Ys) ->
+    case length(Xs) =:= length(Ys) of
+	true ->
+	    lift_option_list(lists:zipwith(fun intersect/2, Xs, Ys));
+	false ->
+	    none
     end.
 
 elems_subtype(undefined, undefined) ->
@@ -520,7 +572,7 @@ elems_subtype(Xs, Ys) ->
 -spec lift_option_list([{ok, A} | none]) -> {ok, [A]} | none.
 lift_option_list([]) ->
     {ok, []};
-lift_option_list([{some, X}|Xs]) ->
+lift_option_list([{ok, X}|Xs]) ->
     case lift_option_list(Xs) of
 	none -> none;
 	{ok, Xs2} -> {ok, [X|Xs2]}
