@@ -24,6 +24,7 @@
 \newcommand{\posctype}{{\type}^{+\text{C}}}
 \newcommand{\negtype}{{\type}^{-}}
 \newcommand{\res}[1]{\texttt{#1}}
+\newcommand{\If}[3]{\res{if}\ #1\ \res{then}\ #2\ \res{else}\ #3}
 
 \counterwithin*{equation}{section}
 \counterwithin*{equation}{subsection}
@@ -146,67 +147,184 @@ $=:=$ operator.
 
 \subsection{Generating Type Environments}
 
-\newcommand{\Gden}[2][\Gamma{}s]{{G \llbracket{} #2 \rrbracket{}}_{#1}}
+\newcommand{\Gden}[1]{{G \llbracket{} #1 \rrbracket{}}}
+\newcommand{\Proj}[2]{{\pi}_{#1} (#2)}
+\newcommand{\ProjL}[1]{\Proj{1}{#1}}
+\newcommand{\ProjR}[1]{\Proj{2}{#1}}
+\newcommand{\JoinG}[2]{#1 \Join{} #2}
+\newcommand{\Map}[2]{[#1 \mapsto{} #2]}
+
+\begin{definition}[Environment]
+  An environment is a total function $\Gamma$ which maps variables to types. The
+  shorthand $\Map{x}{T}$ maps the variable $x$ to type $T$, leaving all other
+  variables mapped to $\atom{any}$. It can thus be written:
+
+  \begin{align*}
+    \Map{x}{T} = \lambda y . \text{if}\ x = y\ \text{then}\ T\ \text{else}\ \atom{any}
+  \end{align*}
+\end{definition}
+
+\begin{definition}[Joining Environment Sets]
+  Two sets environments $a$ and $b$ can be joined via the $\Join$ operator, which
+  merges each environment in $a$ with each environment in $b$ via conjunction:
+  \begin{align*}
+    \JoinG{a}{b} = \left\{ \lambda x. f(x) \land g(x)\ \middle|\ f \in a \land g \in b \right\}
+  \end{align*}
+\end{definition}
 
 \begin{definition}[Environment Generation]
 
-We generate a \textit{set} of type environments for a guard via the
-$\Gden{\cdot}$ function.
-\begin{align*}
-  \Gden{\res{true}
-  } ={}&
-         \left\{
-         \lambda x . \Gamma(x) \land \atom{any}
-         \ \middle|\
-         \Gamma \in \Gamma{}s
-         \right\}
-  && \textsc{GTrue} \\
-  \Gden{\res{false}
-  } ={}&
-         \left\{
-         \lambda x . \Gamma(x) \land \atom{none}
-         \ \middle|\ 
-         \Gamma \in \Gamma{}s
-         \right\}
-  && \textsc{GFalse} \\
-  \Gden{\res{not}\ g
-  } ={}&
-         \left\{
-         \lambda x . \neg \Gamma(x)
-         \ \middle|\
-         \Gamma \in \Gamma{}s
-         \right\}
-  && \textsc{GNot} \\
-  \Gden{\res{if}\ g\ \res{then}\ g_t\ \res{else}\ g_f
-  } ={}& 
-         \Gden[\Gamma_g]{g_t} \cup \Gden[\Gamma_{\neg g}]{g_f}
-  && \textsc{GIf} \\
-       & \text{where}\ \Gamma_g = \Gden{g}\ 
-         \text{and}\ \Gamma_{\neg g} = \left\{ \lambda x . \neg \Gamma(x)\ \middle|\ \Gamma \in \Gden{g} \right\} \\
-  \Gden{v\ \res{is}\ T
-  } ={}&
-         \left\{
-         \lambda x . \text{if}\ x = v\ \text{then}\ \Gamma(x) \land T\ \text{else}\ \Gamma(x)
-         \ \middle|\ 
-         \Gamma \in \Gamma{}s
-         \right\}
-  && \textsc{GIs} \\
-  \Gden{v\ \res{=:=}\ l
-  } ={}&
-         \left\{
-         \lambda x . \text{if}\ x = v\ \text{then}\ \Gamma(x) \land \singleton{type(l)}{l}\ \text{else}\ \Gamma(x)
-         \ \middle|\
-         \Gamma \in \Gamma{}s
-         \right\} 
-  && \textsc{GEq}
-\end{align*}
+  We generate an ordered pair of \textit{sets} of type environments for a guard
+  via the $\Gden{\cdot}$ function. The first element of the pair represents the
+  type environments for which the guard succeeds, and the second for failure.
+  \begin{align*}
+    \Gden{\res{true}
+    } ={}&
+           \left(
+           \left\{ \lambda x . \atom{any} \right\}
+           ,
+           \varnothing
+           \right)
+    && \textsc{GTrue} \\
+    \Gden{\res{false}
+    } ={}&
+           \left(
+           \varnothing
+           ,
+           \left\{ \lambda x . \atom{any} \right\}
+           \right)
+    && \textsc{GFalse} \\
+    \Gden{\res{not}\ g
+    } ={}&
+           \left(
+           \ProjR{\Gden{g}}
+           ,
+           \ProjL{\Gden{g}}
+           \right)
+    && \textsc{GNot} \\
+    \Gden{\res{if}\ g\ \res{then}\ g_t\ \res{else}\ g_f
+    } ={}&
+           ( (\JoinG{\ProjL{\Gden{g}}}{\ProjL{\Gden{g_t}}}) \cup (\JoinG{\ProjR{\Gden{g}}}{\ProjL{\Gden{g_f}}}),
+    && \textsc{GIf} \\
+         & (\JoinG{\ProjL{\Gden{g}}}{\ProjR{\Gden{g_f}}} ) \cup (\JoinG{\ProjR{\Gden{g}}}{\ProjR{\Gden{g_f}}} ) ) \\
+    \Gden{v\ \res{is}\ T
+    } ={}&
+           \left(
+           \left\{ \Map{v}{T} \right\}
+           ,
+           \left\{ \Map{v}{\neg T} \right\}
+           \right)
+    && \textsc{GIs} \\
+    \Gden{v\ \res{=:=}\ l
+    } ={}&
+           \left(
+           \left\{ \Map{v}{\singleton{type(l)}{l}} \right\}
+           ,
+           \left\{ \Map{v}{\neg \singleton{type(l)}{l}} \right\}
+           \right)
+    && \textsc{GEq}
+  \end{align*}
 \end{definition}
 
-If we were to use the definition of~\cite{Pearce2013}, we would get a single
-$\Gamma$ with union types, which would result in an over-approximation.
+The rule \textsc{GTrue} states that the guard $\res{true}$ always succeeds and
+never fails. Similarly, \textsc{GFalse} never succeeds and always fails. Both
+of these guards contain no type assertions, so their success and failure
+environments respectively map all variables to $\atom{any}$. Negation of a
+guard via \textsc{GNot} flips the pair from the guard it wraps: it succeeds in
+all cases the sub-guard fails, and vice versa.
 
-\todo[inline]{this needs a lot of complicated explanation that's hard to put
-  down in a notation that makes sense to me}
+Conditional statements are the most complex, as multiple control flow paths can
+be taken to success or failure of the entire guard (rule \textsc{GIf}). Each of
+$g_t$ and $g_f$ may succeed or fail, but the selection of these depends on the
+success or failure of $g$ respectively. Ultimately, the guard succeeds whenever
+$g_t$ or $g_f$ does, and fails similarly. We must therefore consider four
+situations: when $g$ succeeds, $g_t$ either succeeds or fails, and when $g$
+fails, $g_f$ either succeeds or fails. In each case, we combine the results of
+the control flows, taking the join ($\Join$) of the corresponding branches. We do
+not follow the definition of~\cite{Pearce2013} for $\res{if}$ statements which
+are both restrictive and create an over-approximation of the typing environment.
+The trade-off is space: many more environments must be stored in a set.
+
+\begin{example}[Idempotency of $\res{if}$]
+    \begin{align*}
+    \Gden{\If{w\ \res{is}\ W}{\res{true}}{\res{false}}}
+    =& ( \JoinG{\ProjL{\Gden{w\ \res{is}\ W}}}{\ProjL{\Gden{\res{true}}}}
+       \cup \JoinG{\ProjR{\Gden{w\ \res{is}\ W}}}{\ProjL{\Gden{\res{false}}}}
+       , \\
+     & \JoinG{\ProjL{\Gden{w\ \res{is}\ W}}}{\ProjR{\Gden{\res{true}}}}
+       \cup \JoinG{\ProjR{\Gden{w\ \res{is}\ W}}}{\ProjR{\Gden{\res{false}}}} ) \\
+    =& ( \JoinG{\left\{ \Map{w}{W} \right\}}{ \left\{ \lambda x . \atom{any} \right\}}
+       \cup \JoinG{\left\{ \Map{w}{\neg W} \right\}}{ \varnothing }
+       , \\
+     & \JoinG{\left\{ \Map{w}{W} \right\}}{\varnothing}
+       \cup \JoinG{ \left\{ \Map{w}{\neg W} \right\} }{ \left\{ \lambda x . \atom{any} \right\} }
+       ) \\
+    =& ( \left\{ \Map{w}{W \land{\atom{any}} \right\} } \cup \varnothing
+       ,
+       \varnothing \cup \left\{ \Map{w}{\neg W \land \atom{any}} \right\}
+       ) \\
+    =& ( \Map{w}{W}, \Map{w}{\neg W} )
+  \end{align*}
+
+\todo[inline]{this is also an example of idempotency of abstraction of $g$ to
+$\If{g}{\res{true}}{\res{false}}$}
+\end{example}
+
+\begin{proof}[Idempotency of $\res{if}$]
+  \begin{align*}
+    \forall g . \Gden{\If{g}{\res{true}}{\res{false}}} = \Gden{g}
+  \end{align*}
+  Trivial by induction on $g$. \todo{is it?}
+\end{proof}
+
+\begin{example}[Guard interpretation]
+  \begin{align*}
+    \Gden{\If{v\ \res{is}\ S}{( \If{w\ \res{is}\ W}{\res{true}}{\res{false}} )}{v\ \res{is}\ T}}
+  \end{align*}
+  This can be simplified via idempotency of $\res{if}$ to
+  \begin{align*}
+    \Gden{\If{v\ \res{is}\ S}{w\ \res{is}\ W}{v\ \res{is}\ T}}
+  \end{align*}
+
+  There are four possibilities when evaluating this guard, depending on whether
+  $v\ \res{is}\ S$ succeeds. If the test succeeds, then $w\ \res{is}\ W$ either
+  fails or succeeds, and if the test fails, then $v\ \res{is}\ T$ either
+  succeeds or fails. There are two control paths in which the guard succeeds
+  (success of the test and success of the true branch, or failure of the test
+  and success of the false branch), and two in which it fails (success of the
+  test and failure of the true branch, or failure of the test and failure of the
+  true branch). Therefore, we expect four type environments: two representing
+  success, and two for failure.
+  
+  \begin{align*}
+    \Gden{\If{v\ \res{is}\ S}{w\ \res{is}\ W}{v\ \res{is}\ T}}
+    =&
+       ( \JoinG{\left\{ \Map{v}{S} \right\}}{\left\{ \Map{w}{W} \right\}}
+       \cup \JoinG{\left\{ \Map{v}{\neg S} \right\}}{\left\{ \Map{v}{T} \right\} }
+       , \\
+     & \JoinG{\left\{ \Map{v}{S} \right\}}{\left\{ \Map{w}{\neg W} \right\}}
+       \cup \JoinG{\left\{ \Map{v}{\neg S} \right\}}{\left\{ \Map{v}{\neg T} \right\}}
+       ) \\
+    =&
+       ( \left\{ [ v \mapsto S, w \mapsto W ] \right\}
+       \cup \left\{ [ v \mapsto \neg S \land T ] \right\}
+       , \\
+     & \left\{ [ v \mapsto S, w \mapsto \neg W ] \right\}
+       \cup \left\{ [ v \mapsto \neg S \land \neg T ] \right\}
+       ) \\
+    =& ( \left\{ [ v \mapsto S, w \mapsto W ], [ v \mapsto \neg S \land T ] \right\}
+       , \\
+     &  \left\{ [ v \mapsto S, w \mapsto \neg W ], [ v \mapsto \neg S \land \neg T ] \right\} )
+  \end{align*}
+  \todo[inline]{This seems better than Pearce's over-approximation which from
+    my understanding would give a single type environment
+    $[ v \mapsto S \lor T, w \mapsto W \lor \neg W ]$. That allows for $v : S$ and $w : \neg W$,
+    which is \textit{not} a successful control path.
+  }
+\end{example}
+
+
+
 
 
 \subsection{Patterns}
