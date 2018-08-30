@@ -7,6 +7,7 @@
 \usepackage{amssymb}
 \usepackage{todonotes}
 \usepackage{chngcntr}
+\usepackage{subcaption}
 \setmonofont[Scale=0.8]{DejaVu Sans Mono}
 
 \newcommand{\alt}{\ |\ }
@@ -586,6 +587,32 @@ equivalently $rewrite(\rewrite, T)$.
 \todo[inline]{do we need to do this? should we not just map rewrite over the
   type? I don't think so. We're pushing things \textit{down} the tree as well
   as up, so I think we might need to re-visit already re-written redexes}
+
+\section{Message Dependencies}
+
+\subsection{Out-of-order dependencies}
+
+It is possible for the reception of messages to rely on messages sent in the
+\textit{future}:
+
+\inputminted{erlang}{order.erl}
+
+The client will send the messages \texttt{'end'} and \texttt{'begin'} to the
+server --- \textit{in that order}. Due to Erlang's selective \texttt{receive}
+behaviour, the server receives the messages in the opposite order:
+
+\begin{minted}[autogobble]{text}
+  Erlang/OTP 20 [erts-9.3.3.3] [source] [64-bit] [smp:8:8] [ds:8:8:10] [async-threads:10] [kernel-poll:false]
+
+  Eshell V9.3.3.3  (abort with ^G)
+  1> order:start().
+  done!
+  'begin'
+  2>
+\end{minted}
+
+It seems that there is a general rule: if receiving $x$ relies on receiving $y$,
+then $x$ \textit{could} be received if $y$ is \textit{ever} sent.
 
 \subsection{Singleton Construction}
 
