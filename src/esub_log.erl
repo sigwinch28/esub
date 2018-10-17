@@ -73,7 +73,7 @@ start() ->
     gen_server:start({local, ?MODULE}, ?MODULE, [], []).
 
 stop() ->
-    gen_server:stop(?MODULE).
+    gen_server:call(?MODULE, shutdown).
 
 init(_) ->
     {ok, {debug, 0}}.
@@ -95,7 +95,7 @@ handle_cast({print, Str}, {_Level, Indent} = State) ->
 handle_cast({log, MsgLevel, Str}, {Level, _Indent} = State) ->
     case level_to_integer(MsgLevel) >= level_to_integer(Level) of
 	true ->
-	    io:format("[~s] ", [level_to_list(Level)]),
+	    io:format("[~s] ", [level_to_list(MsgLevel)]),
 	    io:format("~s", [Str]),
 	    io:format("~n");
 	false ->
