@@ -6,6 +6,10 @@
 -export([debug/1,debug/2,info/1,info/2,warn/1,warn/2,err/1,err/2,fatal/1,fatal/2]).
 -export([print/1,print/2,indent/0,unindent/0,indent/1,unindent/1,set_level/1]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -esub_start_funs([start/0]).
 -esub_api_funs([fatal/2,log/3,print/2]).
 
@@ -90,18 +94,31 @@ handle_call({level, NewLevel}, _From, {_Level, Indent}) ->
 
 handle_cast({print, Str}, {_Level, Indent} = State) ->
     print_indent(Indent),
-    io:format("~s", [Str]),
+    format("~s", [Str]),
     {noreply, State};
 handle_cast({log, MsgLevel, Str}, {Level, _Indent} = State) ->
     case level_to_integer(MsgLevel) >= level_to_integer(Level) of
 	true ->
-	    io:format("[~s] ", [level_to_list(MsgLevel)]),
-	    io:format("~s", [Str]),
-	    io:format("~n");
+	    formatln("[~s] ~s", [level_to_list(MsgLevel), Str]);
 	false ->
 	    ok
     end,
     {noreply, State}.
+
+-ifdef(TEST).
+format(Fmt, Args) ->
+    ?debugFmt(Fmt, Args).
+
+formatln(Fmt, Args) ->
+    format(Fmt, Args).
+-else.
+format(Fmt, Args) ->
+    io:format(Fmt, Args).
+
+formatln(Fmt, Args) ->
+    format(Fmt, Args),
+    io:format("~n").
+-endif.
 
 level_to_list(debug) -> "DEBUG";
 level_to_list(info)  -> "INFO ";

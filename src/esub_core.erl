@@ -1,48 +1,8 @@
 -module(esub_core).
 
--export([compile/1,c_guard_to_guard/1]).
--export([get_foo_clause/0,test/0]).
+-export([c_guard_to_guard/1]).
 
--define(COMPILE_OPTS, [binary,bin_opt_info,debug_info,report,return,verbose,to_core]).
-
-compile(Filename) ->    
-    compile:file(Filename, ?COMPILE_OPTS).
-
-get_foo_clause() ->
-    {ok, foo, Module, _Warnings} = compile("foo.erl"),
-    Defs = cerl:module_defs(Module),
-    [{_Name,Fun}|_] = Defs,
-    Body = cerl:fun_body(Fun),
-    Clauses = cerl:receive_clauses(Body),
-    [Clause|_] = Clauses,
-    Clause.
-
-test() ->
-    Clause = get_foo_clause(),
-    Guard = c_guard_to_guard(cerl:clause_guard(Clause)),
-    Gammas = ety:guard_to_gamma(Guard),
-    FmtGammas =
-	ety:gamma_map(fun(_, Val) ->
-			      lists:flatten(ety:format_ety(Val))
-		      end, Gammas),
-    io:format("---~nGammas:~n~p~n", [FmtGammas]),
-    Types1 = lists:map(fun(Pat) ->
-			      lists:map(fun(Gamma) ->
-						c_pat_to_ety(Pat, Gamma)
-					end, Gammas)
-		      end, cerl:clause_pats(Clause)),
-    Types = lists:flatten(Types1),
-    FmtTypes = lists:map(fun(Type) ->
-				 lists:flatten(ety:format_ety(Type))
-			 end, Types),
-    io:format("---~nTypes:~n~p~n", [FmtTypes]),
-    DNFTypes = lists:map(fun ety:dnf/1, Types),
-    FmtDNFTypes = lists:map(fun(Type) ->
-				    lists:flatten(ety:format_ety(Type))
-			    end, DNFTypes),
-    io:format("---~nDNF Types:~n~p~n", [FmtDNFTypes]).			  
-    
-
+-spec c_guard_to_guard(cerl:cerl()) -> esub_guard:guard().
 c_guard_to_guard(Guard) ->
     case cerl:type(Guard) of
 	call ->
@@ -80,23 +40,27 @@ c_guard_to_guard(Guard) ->
 		    % of the true/false branches
 		    case {ABool, BBool} of
 			{true, false} ->
-			    ety:update_ann(src, Guard,
-					   ety:g_if(Test, AGuard, BGuard));
+			    esub_type:update_ann(src, Guard,
+						 esub_guard:g_if(Test, AGuard, BGuard));
 			{false, true} ->
-			    ety:update_ann(src, Guard,
-					   ety:g_if(Test, BGuard, AGuard))
+			    esub_type:update_ann(src, Guard,
+						 esub_guard:g_if(Test, BGuard, AGuard))
 		    end
 	    end;
 	'literal' ->
 	    case cerl:concrete(Guard) of
-		true -> ety:update_ann(src, Guard, ety:g_true());
-		false -> ety:update_ann(src, Guard, ety:g_false())
+		true -> esub_guard:update_ann(src, Guard, esub_guard:g_true());
+		false -> esub_guard:update_ann(src, Guard, esub_guard:g_false())
 	    end
     end.
 
-cerl_subst([Var], Value, Node) ->
-    cerl_subst1(cerl:var_name(Var),Value,Node).
+-spec cerl_subst([cerl:cerl()], cerl:cerl(), cerl:cerl()) -> cerl:cerl().
+cerl_subst(Vars, Value, Node) ->
+    lists:foldl(fun(V,Acc) ->
+			cerl_subst1(cerl:car_name(V),Value,Acc)
+		end, Node, Vars).
 
+-spec cerl_subst1(cerl:cerl(), cerl:cerl(), cerl:cerl()) -> cerl:cerl().
 cerl_subst1(Var, Value, Tree) ->
     cerl_trees:map(fun(Node) ->
 			   case cerl:type(Node) of
@@ -131,7 +95,8 @@ c_erlang_call_to_test(Type, Call) ->
 	    case cerl:type(Arg) of
 		var ->
 		    Var = cerl:var_name(Arg),
-		    ety:update_ann(src, Call, ety:g_test(Type, Var))
+		    Ty = esub_type:atom_to_type(Type),
+		    esub_guard:update_ann(src, Call, esub_guard:g_test(Ty, Var))
 	    end
     end.
 
