@@ -43,7 +43,7 @@
 
 -type atomic() :: t_any() | t_atom() | t_boolean() | t_number() | t_integer()
 		  | t_tuple(atomic()).
-		  
+
 -type type() :: t_any() | t_atom() | t_boolean() | t_number() | t_integer() |
 	       t_tuple(type()) | t_singleton() | t_not() | t_or() | t_and().
 
@@ -634,7 +634,7 @@ dnf1_tuple([Type|Types], Acc) ->
 %%  - negation will only be applied to atomic types.
 %%
 %% The result is a type which has been entirely canonicalised.
-%% 
+%%
 -spec dnf_to_canonical(type()) -> type().
 dnf_to_canonical(Type) ->
     Disjs = disj_to_list(Type),
@@ -701,7 +701,7 @@ canon1(Left, Right) ->
 -spec canon1_neg(type(), type()) -> {ok, type()} | none.
 canon1_neg(Type1, Type2) ->
     case atomic_subtype(Type1, Type2) of
-	{ok, _} -> 
+	{ok, _} ->
 	    {ok, t_not(t_any())};
 	none ->
 	    case intersect(Type1, Type2) of
@@ -749,7 +749,7 @@ has_ors(Type) ->
 	    has_ors(and_left(Type)) orelse has_ors(and_right(Type));
 	'or' ->
 	    true
-    end.     
+    end.
 
 -spec is_dnf(type()) -> boolean().
 is_dnf(Type) ->
@@ -778,7 +778,7 @@ is_dnf(Type) ->
     end.
 
 
-    
+
 
 
 
@@ -828,16 +828,3 @@ list_to_disj([T]) ->
     T;
 list_to_disj([T|Ts]) ->
     t_or(T, list_to_disj(Ts)).
-
-
-
-
-
-
-
-
-
-
-
-
-
