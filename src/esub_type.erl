@@ -1,4 +1,5 @@
 -module(esub_type).
+-compile([export_all]).
 -export([get_ann/1,set_ann/2,update_ann/3]).
 
 -export([t_any/0,t_atom/0,t_boolean/0,t_number/0,t_integer/0,t_tuple/0,
@@ -269,8 +270,7 @@ format(Ety) ->
 %%
 -spec subtype(type(), type()) -> boolean().
 subtype(S, T) ->
-    Void = t_not(t_any()),
-    eq(Void, dnf_plus(t_and(S, t_not(T)))).
+    is_void(dnf_plus(t_and(S, t_not(T)))).
 
 %%==============================================================================
 %% Type helpers
@@ -675,8 +675,10 @@ canon1(Left, Right) ->
 		    case is_primitive(Left) andalso is_primitive(Right) of
 			true ->
 			    case intersect(Left, Right) of
-				{ok, NewType} -> NewType;
-				none -> {ok, t_not(t_any())}
+				{ok, NewType} ->
+				    {ok, NewType};
+				none ->
+				    {ok, t_not(t_any())}
 			    end;
 			false ->
 			    none
@@ -819,7 +821,7 @@ list_to_conj([T|Ts]) ->
 disj_to_list(T) ->
     case name(T) of
 	'or' ->
-	    conj_to_list(or_left(T)) ++ conj_to_list(or_right(T));
+	    disj_to_list(or_left(T)) ++ disj_to_list(or_right(T));
 	_ ->
 	    [T]
     end.

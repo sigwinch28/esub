@@ -21,15 +21,15 @@
 -type fun_name() :: {atom(), integer()}.
 -type errorable(Ty) :: {ok, Ty} | {error, term()}.
 
--record(request, {callback :: fun_name(),
-		  ref :: cerl:cerl(),
-		  payload :: cerl:cerl(),
-		  src :: cerl:cerl()}).
+-record(request, {name :: fun_name(),
+		  used :: boolean(),
+		  type :: esub_type:type(),
+		  line :: integer()}).
 
--record(request_type, {callback :: fun_name(),
-		       ref :: cerl:cerl(),
-		       type :: esub_type:type(),
-		       src :: cerl:cerl()}).
+-record(callback_clause, {type :: esub_type:type(),
+			  used :: boolean(),
+			  line :: integer()}).
+
 
 %%==============================================================================
 %% Entry point
@@ -41,7 +41,7 @@ main(Args) ->
 
 analyse_file(Filename) ->
     info("Analysing file '~s'", [Filename]),
-    
+
     debug("Compiling module to Core Erlang"),
     CompileRes = compile:file(Filename, [to_core, binary] ++ ?COMPILER_OPTIONS),
     case CompileRes of
@@ -53,7 +53,7 @@ analyse_file(Filename) ->
 	{error,Errors,_Warnings} ->
 	    fatal("Compilation errors: ~p", [Errors])
     end.
-    
+
 analyse_c_module(Module) ->
     debug("Finding module behaviours"),
     AllBehaviours = c_module_behaviours(Module),
@@ -67,8 +67,8 @@ analyse_c_module(Module) ->
 			  ok = check_behaviour(Behaviour, Module)
 		  end, Behaviours).
 
-   
-		
+
+
 
 %%==============================================================================
 %% Behaviour Information
@@ -108,39 +108,115 @@ check_behaviour(Behaviour, Module) ->
     debug("Finding calls to known request functions"),
     Requests = get_requests(Behaviour, Module),
     info("Found ~p calls to known request functions", [length(Requests)]),
-    RequestTypes = lists:map(fun({Fun,Ref,Payload,Src}) ->
-				     {Fun,esub:c_pat_to_type(Payload)}
+    RequestTypes = lists:map(fun({Fun,_Ref,Payload,Src}) ->
+				     Type =esub:c_pat_to_type(Payload),
+				     Line = c_line(Src),
+				     #request{name=Fun,type=Type,used=false,line=Line}
 			     end, Requests),
+    info("Requests: ~p~n", [RequestTypes]),
 
     debug("Finding known callback functions"),
-    {Callbacks, Undefined, Invalid} = get_callbacks(Behaviour, Module),
-    lists:foreach(fun(Name) ->
-			  warn("Callback '~p' for behaviour '~p' UNDEFINED", [Name, Behaviour])
-		  end, Undefined),
-    lists:foreach(fun(Name) ->
-			  err("Callback '~p' for behaviour '~p' MALFORMED", [Name, Behaviour])
-		  end, Invalid),
-    lists:foreach(fun({Name,_Body}) ->
-			  debug("Callback '~p' for behaviour '~p' OK", [Name, Behaviour])
-		  end, Callbacks),
-    info("Found ~p callback functions", [length(Callbacks)]),
-    CallbackTypes = lists:map(fun({Name,Cases}) ->
-				      Types = lists:map(fun({Pat, Guard}) ->
-								pat_guard_to_type(Pat, Guard)
-							end, Cases),
-				      {Name, Types}
-			      end, Callbacks),
+    {Callbacks0, Undefined, Invalid} = get_callbacks(Behaviour, Module),
 
-    Res = lists:map(fun({Req,Type}) ->
-			    CallbackName = request_to_callback(Behaviour, Req),
-			    CallbackType = proplists:get_value(CallbackName, CallbackTypes),
-			    debug("Request:~n~p", [Type]),
-			    debug("Callback:~n~p", [CallbackType]),
-			    {Req,Type,CallbackType}
-		    end, RequestTypes),
-    Res.
+    lists:foreach(fun(Name) ->
+			  warn("Callback '~p' for behaviour '~p' UNDEFINED",
+			       [Name, Behaviour])
+		  end, Undefined),
+
+    lists:foreach(fun(Name) ->
+			  err("Callback '~p' for behaviour '~p' MALFORMED",
+			      [Name, Behaviour])
+		  end, Invalid),
+
+    lists:foreach(fun({Name,_Body}) ->
+			  debug("Callback '~p' for behaviour '~p' OK",
+				[Name, Behaviour])
+		  end, Callbacks0),
+
+    info("Found ~p callback functions", [length(Callbacks0)]),
+    CallbackTypesList = lists:map(fun({Name,Cases}) ->
+					  Clauses = lists:map(fun({Pat, Guard}) ->
+								      Ty = pat_guard_to_type(Pat, Guard),
+								      Line = c_line(Pat),
+								      #callback_clause{type=Ty, used=false, line=Line}
+							      end, Cases),
+					  WithoutCatch = lists:reverse(tl(lists:reverse(Clauses))),
+					  {Name, WithoutCatch}
+				  end, Callbacks0),
+    CallbackTypes = maps:from_list(CallbackTypesList),
+
+    info("Callback types: ~p", [CallbackTypes]),
+    Res = lists:mapfoldl(fun(Req, Callbacks) ->
+				 CbName = request_to_callback(Behaviour, Req#request.name),
+				 info("Call to ~p on line ~p", [CbName, Req#request.line]),
+				 Clauses = maps:get(CbName, Callbacks),
+				 ReqTy = Req#request.type,
+				 case count_callback_clauses_for_subtype(ReqTy, Clauses) of
+				     {ok, N} ->
+					 NewClauses = mark_callback_clauses_used(N, Clauses),
+					 NewCallbacks = maps:put(CbName, NewClauses, Callbacks),
+					 NewReq = Req#request{used = true},
+					 info("is used in ~p clauses",[N]),
+					 {NewReq, NewCallbacks};
+				     none ->
+					 info("is never used"),
+					 {Req, Callbacks}
+				 end
+			 end, CallbackTypes, RequestTypes),
+    info("Result: ~p", [Res]),
+    {_,Cbs} = Res,
+    maps:map(fun(Name, Clauses) ->
+		     lists:map(fun(Clause) ->
+				       case Clause#callback_clause.used of
+					   true ->
+					       ok;
+					   false ->
+					       info("callback clause of ~p on line ~p not used", [Name, Clause#callback_clause.line])
+				       end
+			       end, Clauses)
+	     end, Cbs),
+    ok.
 
 %%    {Requests, CallbackTypes, Res}.
+
+mark_callback_clauses_used(0, Cls) ->
+    Cls;
+mark_callback_clauses_used(N, [Cl|Cls]) ->
+    [Cl#callback_clause{used=true}|mark_callback_clauses_used(N-1, Cls)].
+
+count_callback_clauses_for_subtype(S, Cls) ->
+    Acc0 = {esub_type:t_not(esub_type:t_any()), 0},
+    count_callback_clauses_for_subtype(S, Cls, Acc0).
+
+count_callback_clauses_for_subtype(_S, [], _) ->
+    none;
+count_callback_clauses_for_subtype(S, [Cl|Cls], {AccTy, Count}) ->
+    NewTy = esub_type:t_or(Cl#callback_clause.type, AccTy),
+    case esub_type:subtype(S, NewTy) of
+	true ->
+	    {ok, Count+1};
+	false ->
+	    count_callback_clauses_for_subtype(S, Cls, {NewTy, Count+1})
+    end.
+
+
+clauses_for_subtype(S, Ts) ->
+    clauses_for_subtype(S, Ts, {esub_type:t_not(esub_type:t_any()), 0}).
+
+clauses_for_subtype(S, [], {Ty, Count}) ->
+    none;
+clauses_for_subtype(S, [T|Ts], {Ty, Count}) ->
+    Check = esub_type:t_or(T, Ty),
+    case esub_type:subtype(S, Check) of
+	true ->
+	    {ok, Count+1};
+	false ->
+	    clauses_for_subtype(S, Ts, {Check, Count+1})
+    end.
+
+
+
+
 
 get_requests(Behaviour, Cerl) ->
     KnownRequests = known_requests(Behaviour),
@@ -153,8 +229,8 @@ get_requests(Behaviour, Cerl) ->
 					    {Fun,Ref,Payload,Src}
 				    end, Calls)
 		  end, KnownRequests).
-	
-    
+
+
 
 %%==============================================================================
 %% Callback Helpers
@@ -215,18 +291,18 @@ lift_error(Xs) ->
 				Acc0
 			end
 		end, {ok, []}, lists:reverse(Xs)).
-    
+
 
 -spec callback_to_clauses(cerl:c_fun()) -> {ok, [cerl:c_clause()]} | {error, term()}.
 callback_to_clauses(Fun) ->
     Body = cerl:fun_body(Fun),
     case cerl:type(Body) of
 	'case' ->
-	    
+
 	    {ok, cerl:case_clauses(Body)};
 	_ ->
 	    {error, top_level_not_case}
-    end.	
+    end.
 
 %%==============================================================================
 %% Core Erlang Helpers
@@ -262,7 +338,7 @@ find_call1(Module, Name, Arity, Cerl, Acc) ->
 	'call' ->
 	    CallModule0 = cerl:call_module(Cerl),
 	    CallName0 = cerl:call_name(Cerl),
-	    
+
 	    case cerl:is_literal(CallModule0) andalso
 		cerl:is_literal(CallName0) of
 		true ->
