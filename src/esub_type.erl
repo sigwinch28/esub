@@ -339,14 +339,14 @@ rewrite(F, Step0) ->
 %% term and all elements of the second and third arguments (i.e. those
 %% which were not used in the rewrite). If the application yields none,
 %% then move the head of the list to 'Unused', and recurse.
--spec rewrite_list1(fun((A,A) -> {ok, A} | none), A, [A], [A]) -> [A].
+-spec rewrite_list1(fun((A,A) -> {ok, [A]} | none), A, [A], [A]) -> [A].
 rewrite_list1(_F, _Term, [], _Unused) ->
     none;
 rewrite_list1(F, Term, [H|T], Unused) ->
     case F(Term,H) of
-	{ok, NewTerm} ->
+	{ok, NewTerms} ->
 	    %% return the new term, and the unprocessed/unused elements
-	    {ok, NewTerm, T++Unused};
+	    {ok, NewTerms, T++Unused};
 	none ->
 	    rewrite_list1(F, Term, T, [H|Unused])
     end.
@@ -355,15 +355,15 @@ rewrite_list1(F, Term, [H|T], Unused) ->
 %% returns ok and a result, or none. The function is recursively
 %% applied to pairs of elements in the list until no more
 %% rewrites occur.
--spec rewrite_list(fun((A,A) -> {ok, A} | none), [A]) -> [A].
+-spec rewrite_list(fun((A,A) -> {ok, [A]} | none), [A]) -> [A].
 rewrite_list(_F, []) ->
     [];
 rewrite_list(_F, [Term]) ->
     [Term];
 rewrite_list(F, [Term|Terms]) ->
     case rewrite_list1(F, Term, Terms, []) of
-	{ok, NewTerm, Unused} ->
-	    rewrite_list(F, [NewTerm|Unused]);
+	{ok, NewTerms, Unused} ->
+	    rewrite_list(F, NewTerms ++ Unused);
 	none ->
 	    [Term|Terms]
     end.
@@ -659,12 +659,12 @@ dnf_to_canonical(Type) ->
 -spec canon1(type(), type()) -> {ok, type()} | type().
 canon1(Left, Right) ->
     case is_void(Left) or is_void(Right) of
-	true -> {ok, t_not(t_any())};
+	true -> {ok, [t_not(t_any())]};
 	false ->
 	    case {name(Left),name(Right)} of
 		{'not', 'not'} ->
 		    case intersect(not_type(Left), not_type(Right)) of
-			{ok, NewType} -> {ok, t_not(NewType)};
+			{ok, NewType} -> {ok, [t_not(NewType)]};
 			_ -> none
 		    end;
 		{'not', _} ->
@@ -676,9 +676,9 @@ canon1(Left, Right) ->
 			true ->
 			    case intersect(Left, Right) of
 				{ok, NewType} ->
-				    {ok, NewType};
+				    {ok, [NewType]};
 				none ->
-				    {ok, t_not(t_any())}
+				    {ok, [t_not(t_any())]}
 			    end;
 			false ->
 			    none
@@ -704,19 +704,19 @@ canon1(Left, Right) ->
 canon1_neg(Type1, Type2) ->
     case atomic_subtype(Type1, Type2) of
 	{ok, _} ->
-	    {ok, t_not(t_any())};
+	    {ok, [t_not(t_any())]};
 	none ->
 	    case intersect(Type1, Type2) of
 		none ->
-		    {ok, Type1};
+		    {ok, [Type1]};
 		{ok, _} ->
 		    case atomic_subtype(Type2, Type1) of
 			none ->
 			    IntersectType = case intersect(Type1, Type2) of
-						none -> t_not(t_any());
+						none -> [t_not(t_any())];
 						{ok, T} -> T
 					    end,
-			    {ok, t_and(Type1, t_not(IntersectType))};
+			    {ok, [Type1, t_not(IntersectType)]};
 			_ -> none
 		    end
 	    end
