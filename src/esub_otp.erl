@@ -47,6 +47,7 @@ analyse_file(Filename) ->
     case CompileRes of
 	{ok, Name, Bin} ->
 	    info("Compiled module '~s' to Core Erlang", [Name]),
+	    info("~p", [Bin]),
 	    analyse_c_module(Bin);
 	error ->
 	    fatal("Compilation error");
@@ -98,7 +99,7 @@ known_starts(gen_server) -> [{{start_link,4},1}, {{start,4},1}].
 pat_guard_to_type(Pat, CGuard) ->
     Guard = esub_core:c_guard_to_guard(CGuard),
     {Envs, _} = esub:guard_to_envs(Guard),
-    debug("Envs: ~p", [Envs]),
+    debug("Pattern: ~p", [Pat]),
     Types = lists:map(fun(Env) -> esub:c_pat_to_type(Pat, Env) end, Envs),
     lists:foldl(fun(Type,Acc) ->
 			esub_type:t_or(Type,Acc)
@@ -134,6 +135,7 @@ check_behaviour(Behaviour, Module) ->
 		  end, Callbacks0),
 
     info("Found ~p callback functions", [length(Callbacks0)]),
+    info("Callbacks: ~p", [Callbacks0]),
     CallbackTypesList = lists:map(fun({Name,Cases}) ->
 					  Clauses = lists:map(fun({Pat, Guard}) ->
 								      Ty = pat_guard_to_type(Pat, Guard),

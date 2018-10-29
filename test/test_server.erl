@@ -27,6 +27,8 @@ handle_call({call, Arg}, _From, State) when is_atom(Arg) ->
     {reply, ok, State};
 handle_call({call, Arg}, _From, State) when not is_atom(Arg) ->
     {reply, ok, State};
+handle_call({bare, tuple}, _From, State) ->
+    {reply, ok, State};
 handle_call({call_unused, _Arg}, _From, State) ->
     {reply, ok, State}.
 

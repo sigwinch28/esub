@@ -45,8 +45,17 @@ c_pat_to_type(Pattern, Gamma) ->
 	    esub_type:update_ann(src, Pattern, esub_type:t_tuple(Types));
 	'literal' ->
 	    Value = cerl:concrete(Pattern),
-	    esub_type:update_ann(src,Pattern, esub_type:t_singleton(Value))
+	    debug("got concrete value: ~p", [Value]),
+	    Ty = c_lit_to_type(Value),
+	    esub_type:update_ann(src,Pattern, Ty)
     end.
+
+c_lit_to_type(L) when is_tuple(L) ->
+    Es = lists:map(fun c_lit_to_type/1, tuple_to_list(L)),
+    esub_type:t_tuple(Es);
+c_lit_to_type(L) ->
+    esub_type:t_singleton(L).
+
 
 -spec c_guard_to_guard(cerl:cerl()) -> esub_guard:guard().
 c_guard_to_guard(_Guard) ->
