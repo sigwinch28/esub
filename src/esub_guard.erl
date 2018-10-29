@@ -2,11 +2,11 @@
 -export([get_ann/1,set_ann/2,update_ann/3]).
 
 -export([g_true/0,g_false/0,g_test/2,test_type/1,test_var/1,g_eq/2,eq_lit/1,
-	 eq_var/1,g_if/3,if_test/1,if_then/1,if_else/1]).
+	 eq_var/1,g_if/3,if_test/1,if_then/1,if_else/1,g_not/1,not_guard/1]).
 
 -export([type/1,format/1]).
 
--export_type([g_true/0,g_false/0,g_test/0,g_eq/0,g_if/0,guard/0]).
+-export_type([g_true/0,g_false/0,g_test/0,g_eq/0,g_if/0,g_not/0,guard/0]).
 
 -define(ANN_ELEM, 2).
 
@@ -17,14 +17,16 @@
 -record(g_test, {ann = #{}, type :: esub_type:name() , var :: var()}).
 -record(g_eq, {ann = #{}, lit :: any(), var :: var()}).
 -record(g_if, {ann = #{}, test :: guard(), then :: guard(), else :: guard()}).
+-record(g_not, {ann = #{}, guard :: guard()}).
 
 -type g_true() :: #g_true{}.
 -type g_false() :: #g_false{}.
 -type g_eq() :: #g_eq{}.
 -type g_test() :: #g_test{}.
 -type g_if() :: #g_if{}.
+-type g_not() :: #g_not{}.
 
--type guard() :: g_true() | g_false() | g_eq() | g_test() | g_if().
+-type guard() :: g_true() | g_false() | g_eq() | g_test() | g_if() | g_not().
 
 -type type() :: 'true' | 'false' | 'eq' | 'test' | 'if'.
 
@@ -90,12 +92,21 @@ if_then(If) ->
 if_else(If) ->
     If#g_if.else.
 
+-spec g_not(guard()) -> g_not().
+g_not(Guard) ->
+    #g_not{guard=Guard}.
+
+-spec not_guard(g_not()) -> guard().
+not_guard(Not) ->
+    Not#g_not.guard.
+
 -spec type(guard()) -> type().
 type(#g_true{}) -> true;
 type(#g_false{}) -> false;
 type(#g_test{}) -> test;
 type(#g_eq{}) -> eq;
-type(#g_if{}) -> 'if'.
+type(#g_if{}) -> 'if';
+type(#g_not{}) -> 'not'.
 
 -spec format(guard()) -> list().
 format(Guard) ->
@@ -114,5 +125,8 @@ format(Guard) ->
 	    Test = format(if_test(Guard)),
 	    Then = format(if_then(Guard)),
 	    Else = format(if_else(Guard)),
-	    ["if ", Test, " then ", Then, " else ", Else]
+	    ["if ", Test, " then ", Then, " else ", Else];
+	'not' ->
+	    Guard = format(not_guard(Guard)),
+	    ["¬ ", Guard]
 	end.

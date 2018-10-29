@@ -76,7 +76,10 @@ guard_to_envs(Guard) ->
 		join_env_lists(NegTestEnvs, ElseEnvs),
 	    Failure = join_env_lists(TestEnvs, NegThenEnvs) ++
 		join_env_lists(NegTestEnvs, NegElseEnvs),
-	    {Success, Failure}
+	    {Success, Failure};
+	'not' ->
+	    {Success, Failure} = guard_to_envs(esub_guard:not_guard(Guard)),
+	    {Failure, Success}
     end.
 
 join_env_lists(Es1, Es2) ->
@@ -85,7 +88,7 @@ join_env_lists(Es1, Es2) ->
 					    esub_env:join(E1, E2)
 				    end, Es2)
 		  end, Es1).
-    
+
 
 
 
@@ -94,4 +97,3 @@ join_env_lists(Es1, Es2) ->
 %%====================================================================
 
 parse_command("otp") -> {ok, otp}.
-    

@@ -57,7 +57,7 @@ c_guard_to_guard(Guard) ->
 -spec cerl_subst([cerl:cerl()], cerl:cerl(), cerl:cerl()) -> cerl:cerl().
 cerl_subst(Vars, Value, Node) ->
     lists:foldl(fun(V,Acc) ->
-			cerl_subst1(cerl:car_name(V),Value,Acc)
+			cerl_subst1(cerl:var_name(V),Value,Acc)
 		end, Node, Vars).
 
 -spec cerl_subst1(cerl:cerl(), cerl:cerl(), cerl:cerl()) -> cerl:cerl().
@@ -142,7 +142,11 @@ c_erlang_call_to_guard(Call) ->
 	    [L, R] = Args,
 	    LeftGuard = c_guard_to_guard(L),
 	    RightGuard = c_guard_to_guard(R),
-	    ety:g_if(LeftGuard, RightGuard, ety:g_false())
+	    ety:g_if(LeftGuard, RightGuard, ety:g_false());
+	'not' ->
+	    [Neg] = Args,
+	    NegGuard = c_guard_to_guard(Neg),
+	    esub_guard:g_not(NegGuard)
     end.
 
 -spec is_c_compiler_generated(cerl:cerl()) -> boolean().
@@ -160,7 +164,7 @@ c_call_to_guard(Call) ->
 	    end;
 	false ->
 	    {error, {abstract_call, Call}}
-    end.    
+    end.
 
 c_pat_to_ety(Pattern, Gamma) ->
     case cerl:type(Pattern) of
