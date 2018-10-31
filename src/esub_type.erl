@@ -3,7 +3,7 @@
 -export([get_ann/1,set_ann/2,update_ann/3]).
 
 -export([t_any/0,t_atom/0,t_boolean/0,t_number/0,t_integer/0,t_tuple/0,
-	 t_tuple/1,t_singleton/1,t_singleton/2,t_not/1,t_or/2,t_and/2]).
+	 t_tuple/1,t_singleton/1,t_singleton/2,t_not/1,t_or/2,t_and/2,t_void/0]).
 -export([tuple_types/1,singleton_type/1,singleton_value/1,
 	 not_type/1,set_not_type/2,or_left/1,set_or_left/2,or_right/1,
 	 set_or_right/2,and_left/1,set_and_left/2,and_right/1,set_and_right/2]).
@@ -135,6 +135,10 @@ t_or(Left, Right) ->
 -spec t_and(type(), type()) -> t_and().
 t_and(Left, Right) ->
     #t_and{left=Left, right=Right}.
+
+-spec t_void() -> type().
+t_void() ->
+    t_not(t_any()).
 
 %% get the element types of a tuple
 -spec tuple_types(t_tuple(A)) -> list(A) | 'undefined'.

@@ -1,0 +1,7 @@
+-ifdef(debug).
+-define(debug(Fmt, Args), esub_debug:print({?MODULE_STRING,?LINE,{?FUNCTION_NAME,?FUNCTION_ARITY}}, Fmt, Args)).
+-define(debug(Fmt), ?debug(Fmt, [])).
+-else.
+-define(debug(Fmt, Args), esub_debug:use(Fmt, Args)).
+-define(debug(Fmt), ?debug(Fmt, [])).
+-endif.

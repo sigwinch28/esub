@@ -1,35 +1,32 @@
 -module(esub_otp).
+-define(debug, true).
+-include("esub_debug.hrl").
 -export([main/1]).
--import(esub_log, [debug/1,debug/2,info/1,info/2,warn/1,warn/2,err/1,err/2,
-		   fatal/1,fatal/2,print/1,print/2]).
 
 -define(COMPILER_OPTIONS, [verbose]).
 
 -define(BEHAVIOUR_ATTR, behaviour).
--define(SERVER_CALL_NAME, {'handle_call',3}).
--define(SERVER_CALL_MSG_PAT, 1).
--define(SERVER_CAST_NAME, {'handle_cast',2}).
--define(SERVER_CAST_MSG_PAT, 1).
--define(SERVER_INFO_NAME, {'handle_info',2}).
--define(SERVER_INFO_MSG_PAT, 1).
--define(SERVER_START_NAME, {'start_link',0}).
 -define(EXCLUDED_DEFS, [{'module_info',0},{'module_info',1}]).
 
--define(START_FUNS_ATTR, 'esub_start_funs').
--define(API_FUNS_ATTR, 'esub_api_funs').
-
 -type fun_name() :: {atom(), integer()}.
--type errorable(Ty) :: {ok, Ty} | {error, term()}.
+
 
 -record(request, {name :: fun_name(),
-		  used :: boolean(),
+		  used = false :: false | {true, integer()},
 		  type :: esub_type:type(),
-		  line :: integer()}).
+		  line = undefined :: integer()}).
 
--record(callback_clause, {type :: esub_type:type(),
-			  used :: boolean(),
-			  line :: integer()}).
+-record(callback, {name :: fun_name(),
+		   payload_arg :: integer(),
+		   clauses :: [callback_clause()]}).
 
+-record(callback_clause, {types :: [esub_type:type()],
+			  used = false :: boolean(),
+			  line = undefined :: integer()}).
+
+-type request() :: #request{}.
+-type callback() :: #callback{}.
+-type callback_clause() :: #callback_clause{}.
 
 %%==============================================================================
 %% Entry point
@@ -37,274 +34,271 @@
 
 main(Args) ->
     [Filename] = Args,
-    analyse_file(Filename).
+    {ok, ModuleName, Behaviours} = analyse_file(Filename),
+    io:format("module ~p~n", [ModuleName]),
+    lists:foreach(
+      fun({BehaviourName, {Reqs, Cbs}}) ->
+	      io:format("  behaviour ~p~n", [BehaviourName]),
+	      io:format("    requests~n"),
+	      lists:foreach(
+		fun(Req) ->
+			{Name, Arity} = Req#request.name,
+			Line = Req#request.line,
+			io:format("      request on line ~p via ~p:~p/~B~n",
+				  [Line, BehaviourName, Name, Arity]),
+			io:format("        used: "),
+			case Req#request.used of
+			    {true, N} ->
+				io:format("true, within ~B clauses ~n", [N]);
+			    false ->
+				io:format("false~n")
+			end
+		end, Reqs),
+	      io:format("    callbacks~n"),
+	      lists:foreach(
+		fun({_, Cb}) ->
+			{Name, Arity} = Cb#callback.name,
+			io:format("      callback ~p/~B~n", [Name, Arity]),
+			lists:foreach(
+			  fun(Cl) ->
+				  io:format("        clause on line ~p~n",
+					    [Cl#callback_clause.line]),
+				  io:format("          used: ~p~n",
+					    [Cl#callback_clause.used])
+			  end, Cb#callback.clauses)
+		end, maps:to_list(Cbs))
+	      end, Behaviours).
+
+
 
 analyse_file(Filename) ->
-    info("Analysing file '~s'", [Filename]),
+    ?debug("Analysing source file '~s'", [Filename]),
 
-    debug("Compiling module to Core Erlang"),
+    ?debug("Compiling module to Core Erlang"),
     CompileRes = compile:file(Filename, [to_core, binary] ++ ?COMPILER_OPTIONS),
     case CompileRes of
 	{ok, Name, Bin} ->
-	    info("Compiled module '~s' to Core Erlang", [Name]),
-	    info("~p", [Bin]),
-	    analyse_c_module(Bin);
+	    ?debug("Successfully compiled ~p to Core Erlang", [Name]),
+	    {ok, Name,  analyse_c_module(Bin)};
 	error ->
-	    fatal("Compilation error");
+	    ?debug("Unspecified compiler error"),
+	    {error, unspecified_compiler_error};
 	{error,Errors,_Warnings} ->
-	    fatal("Compilation errors: ~p", [Errors])
+	    ?debug("Compilation errors:"),
+	    ?debug("~p", [Errors]),
+	    {error, {compiler_errors, Errors}}
     end.
 
 analyse_c_module(Module) ->
-    debug("Finding module behaviours"),
+    ?debug("Searching for known module behaviours"),
     AllBehaviours = c_module_behaviours(Module),
-    debug("Module behaviours: ~p", [AllBehaviours]),
+    ?debug("Module has behaviours: ~p", [AllBehaviours]),
 
     Behaviours = lists:filter(fun is_supported/1, AllBehaviours),
-    info("Supported module behaviours: ~p", [Behaviours]),
+    ?debug("Supported module behaviours: ~p", [Behaviours]),
 
-    lists:foreach(fun(Behaviour) ->
-			  info("Checking behaviour '~p'", [Behaviour]),
-			  ok = check_behaviour(Behaviour, Module)
-		  end, Behaviours).
-
-
-
+    lists:map(fun(BehaviourName) ->
+		      ?debug("Checking behaviour ~p", [BehaviourName]),
+		      {BehaviourName, check_behaviour(BehaviourName, Module)}
+	      end, Behaviours).
 
 %%==============================================================================
 %% Behaviour Information
 %%==============================================================================
+-spec is_supported(atom()) -> boolean().
 is_supported(gen_server) -> true;
 is_supported(_) -> false.
 
+-spec known_callbacks(atom()) -> [{fun_name(), integer()}].
 known_callbacks(gen_server) ->
     [{{handle_call,3},1},
      {{handle_cast,2},1},
      {{handle_info,2},1}].
 
+-spec known_requests(atom()) -> [{fun_name(), integer(), integer()}].
 known_requests(gen_server) ->
     %% {{name, arity}, refArg, payloadArg}
     [{{call,2},1,2},
      {{call,3},1,2},
      {{cast,2},1,2}].
 
-request_to_callback(gen_server, {call,2}) -> {handle_call,3};
-request_to_callback(gen_server, {cast,2}) -> {handle_cast,2}.
-
-known_starts(gen_server) -> [{{start_link,4},1}, {{start,4},1}].
+-spec request_name_to_callback_name(atom(), fun_name()) -> fun_name().
+request_name_to_callback_name(gen_server, {call,2}) -> {handle_call,3};
+request_name_to_callback_name(gen_server, {cast,2}) -> {handle_cast,2}.
 
 %%==============================================================================
 %% Behaviour Checking
 %%==============================================================================
-pat_guard_to_type(Pat, CGuard) ->
-    Guard = esub_core:c_guard_to_guard(CGuard),
-    {Envs, _} = esub:guard_to_envs(Guard),
-    debug("Pattern: ~p", [Pat]),
-    Types = lists:map(fun(Env) -> esub:c_pat_to_type(Pat, Env) end, Envs),
-    lists:foldl(fun(Type,Acc) ->
-			esub_type:t_or(Type,Acc)
-		end, esub_type:t_not(esub_type:t_any()), Types).
-
-check_behaviour(Behaviour, Module) ->
-    debug("Finding calls to known request functions"),
-    Requests = get_requests(Behaviour, Module),
-    info("Found ~p calls to known request functions", [length(Requests)]),
-    RequestTypes = lists:map(fun({Fun,_Ref,Payload,Src}) ->
-				     Type =esub:c_pat_to_type(Payload),
-				     Line = c_line(Src),
-				     #request{name=Fun,type=Type,used=false,line=Line}
-			     end, Requests),
-    info("Requests: ~p~n", [RequestTypes]),
-
-    debug("Finding known callback functions"),
-    {Callbacks0, Undefined, Invalid} = get_callbacks(Behaviour, Module),
-
-    lists:foreach(fun(Name) ->
-			  warn("Callback '~p' for behaviour '~p' UNDEFINED",
-			       [Name, Behaviour])
-		  end, Undefined),
-
-    lists:foreach(fun(Name) ->
-			  err("Callback '~p' for behaviour '~p' MALFORMED",
-			      [Name, Behaviour])
-		  end, Invalid),
-
-    lists:foreach(fun({Name,_Body}) ->
-			  debug("Callback '~p' for behaviour '~p' OK",
-				[Name, Behaviour])
-		  end, Callbacks0),
-
-    info("Found ~p callback functions", [length(Callbacks0)]),
-    info("Callbacks: ~p", [Callbacks0]),
-    CallbackTypesList = lists:map(fun({Name,Cases}) ->
-					  Clauses = lists:map(fun({Pat, Guard}) ->
-								      Ty = pat_guard_to_type(Pat, Guard),
-								      Line = c_line(Pat),
-								      #callback_clause{type=Ty, used=false, line=Line}
-							      end, Cases),
-					  WithoutCatch = lists:reverse(tl(lists:reverse(Clauses))),
-					  {Name, WithoutCatch}
-				  end, Callbacks0),
-    CallbackTypes = maps:from_list(CallbackTypesList),
-
-    info("Callback types: ~p", [CallbackTypes]),
-    Res = lists:mapfoldl(fun(Req, Callbacks) ->
-				 CbName = request_to_callback(Behaviour, Req#request.name),
-				 info("Call to ~p on line ~p", [CbName, Req#request.line]),
-				 Clauses = maps:get(CbName, Callbacks),
-				 ReqTy = Req#request.type,
-				 case count_callback_clauses_for_subtype(ReqTy, Clauses) of
-				     {ok, N} ->
-					 NewClauses = mark_callback_clauses_used(N, Clauses),
-					 NewCallbacks = maps:put(CbName, NewClauses, Callbacks),
-					 NewReq = Req#request{used = true},
-					 info("is used in ~p clauses",[N]),
-					 {NewReq, NewCallbacks};
-				     none ->
-					 info("is never used"),
-					 {Req, Callbacks}
-				 end
-			 end, CallbackTypes, RequestTypes),
-    info("Result: ~p", [Res]),
-    {_,Cbs} = Res,
-    maps:map(fun(Name, Clauses) ->
-		     lists:map(fun(Clause) ->
-				       case Clause#callback_clause.used of
-					   true ->
-					       ok;
-					   false ->
-					       info("callback clause of ~p on line ~p not used", [Name, Clause#callback_clause.line])
-				       end
-			       end, Clauses)
-	     end, Cbs),
-    ok.
-
-%%    {Requests, CallbackTypes, Res}.
-
-mark_callback_clauses_used(0, Cls) ->
-    Cls;
-mark_callback_clauses_used(N, [Cl|Cls]) ->
-    [Cl#callback_clause{used=true}|mark_callback_clauses_used(N-1, Cls)].
-
-count_callback_clauses_for_subtype(S, Cls) ->
-    Acc0 = {esub_type:t_not(esub_type:t_any()), 0},
-    count_callback_clauses_for_subtype(S, Cls, Acc0).
-
-count_callback_clauses_for_subtype(_S, [], _) ->
-    none;
-count_callback_clauses_for_subtype(S, [Cl|Cls], {AccTy, Count}) ->
-    NewTy = esub_type:t_or(Cl#callback_clause.type, AccTy),
-    case esub_type:subtype(S, NewTy) of
-	true ->
-	    {ok, Count+1};
-	false ->
-	    count_callback_clauses_for_subtype(S, Cls, {NewTy, Count+1})
-    end.
 
 
-clauses_for_subtype(S, Ts) ->
-    clauses_for_subtype(S, Ts, {esub_type:t_not(esub_type:t_any()), 0}).
-
-clauses_for_subtype(S, [], {Ty, Count}) ->
-    none;
-clauses_for_subtype(S, [T|Ts], {Ty, Count}) ->
-    Check = esub_type:t_or(T, Ty),
-    case esub_type:subtype(S, Check) of
-	true ->
-	    {ok, Count+1};
-	false ->
-	    clauses_for_subtype(S, Ts, {Check, Count+1})
-    end.
-
-
-
-
-
-get_requests(Behaviour, Cerl) ->
-    KnownRequests = known_requests(Behaviour),
+-spec find_requests(atom(), cerl:cerl()) -> [request()].
+find_requests(BehaviourName, Cerl) ->
+    KnownRequests = known_requests(BehaviourName),
     lists:flatmap(fun({{Name,Arity}=Fun,RefN,PayloadN}) ->
-			  Calls = find_calls(Behaviour, Name, Arity, Cerl),
+			  Calls = find_calls(BehaviourName, Name, Arity, Cerl),
 			  lists:map(fun(Src) ->
 					    Args = cerl:call_args(Src),
-					    Ref = lists:nth(RefN, Args),
+					    _Ref = lists:nth(RefN, Args),
 					    Payload = lists:nth(PayloadN, Args),
-					    {Fun,Ref,Payload,Src}
+					    Type = esub:c_pat_to_type(Payload),
+					    #request{
+					       name = Fun,
+					       used = false,
+					       type = Type,
+					       line = c_line(Src)
+					      }
 				    end, Calls)
 		  end, KnownRequests).
 
+-spec ternary_mapfilter1(fun((A) -> {ok, B} | warn | error), [A], {[B], [A], [A]}) -> {[B],[A],[A]}.
+ternary_mapfilter1(_F, [], {Ok, Warn, Error}) ->
+    {lists:reverse(Ok), lists:reverse(Warn), lists:reverse(Error)};
+ternary_mapfilter1(F, [X|Xs], {Ok,Warn,Error}) ->
+    Acc = case F(X) of
+	      {ok, Y} ->
+		  {[Y|Ok], Warn, Error};
+	      warn ->
+		  {Ok, [X|Warn], Error};
+	      error ->
+		  {Ok, Warn, [X|Error]}
+	  end,
+    ternary_mapfilter1(F, Xs, Acc).
+
+-spec ternary_mapfilter(fun((A) -> {ok, B} | warn | error), [A]) -> {[B], [A], [A]}.
+ternary_mapfilter(F, Xs) ->
+    ternary_mapfilter1(F, Xs, {[], [], []}).
+
+c_clause_to_types(CClause) ->
+    CPats = cerl:clause_pats(CClause),
+    CGuard = cerl:clause_guard(CClause),
+
+    Guard = esub_core:c_guard_to_guard(CGuard),
+    {Envs, _} = esub:guard_to_envs(Guard),
+    lists:map(fun(Pat) ->
+		      Types = lists:map(fun(Env) ->
+						esub:c_pat_to_type(Pat, Env)
+					end, Envs),
+		      lists:foldl(fun esub_type:t_or/2, esub_type:t_void(), Types)
+	      end, CPats).
+
+
+c_clause_to_callback_clause(CClause) ->
+    Line = c_line(CClause),
+    Types = c_clause_to_types(CClause),
+    #callback_clause{
+       types = Types,
+       used = false,
+       line = Line
+      }.
+
+c_def_to_callback({Name, Fun}) ->
+    Case = cerl:fun_body(Fun),
+    CClauses = cerl:case_clauses(Case),
+    Clauses = lists:map(fun c_clause_to_callback_clause/1, CClauses),
+    #callback{
+       name = Name,
+       clauses = Clauses
+      }.
+
+
+find_callbacks(BehaviourName, Module) ->
+    KnownCallbacks = known_callbacks(BehaviourName),
+    Defs = c_module_defs(Module),
+    ternary_mapfilter(fun({Name, PayloadArg}) ->
+			      case proplists:lookup(Name, Defs) of
+				  {Name, Def} ->
+				      Callback0 = c_def_to_callback({Name, Def}),
+				      Callback = Callback0#callback{ payload_arg = PayloadArg },
+				      {ok, Callback};
+				  none ->
+				      warn
+			      end
+		      end, KnownCallbacks).
+
+
+check_behaviour(BehaviourName, Module) ->
+    Requests = find_requests(BehaviourName, Module),
+
+    {Callbacks0, UndefinedCbs, InvalidCbs} = find_callbacks(BehaviourName, Module),
+
+    lists:foreach(fun({Name, Arity}) ->
+			  ?debug("Callback ~p/~B undefined", [Name, Arity])
+		  end, UndefinedCbs),
+    lists:foreach(fun({Name, Arity}) ->
+			  ?debug("Callback ~p/~B is malformed", [Name, Arity])
+		  end, InvalidCbs),
+
+    CallbacksPropList = lists:map(fun(Cb) ->
+					  {Cb#callback.name, Cb}
+				  end, Callbacks0),
+    Callbacks = maps:from_list(CallbacksPropList),
+
+    {Reqs, Cbs} = lists:mapfoldl(
+		    fun(Req, Cbs) ->
+			    CbName = request_name_to_callback_name(BehaviourName, Req#request.name),
+			    case maps:find(CbName, Cbs) of
+				error ->
+				    %% unchanged
+				    {Req, Cbs};
+				{ok, Cb} ->
+				    ReqType = Req#request.type,
+				    case callback_count_subtype(Cb, ReqType) of
+					{ok, Count} ->
+					    Req1 = request_mark_used(Req, Count),
+					    Cb1 = callback_mark_used(Cb, Count),
+					    Cbs1 = maps:update(CbName, Cb1, Cbs),
+					    {Req1, Cbs1};
+					none ->
+					    %% also unchanged
+					    {Req, Cbs}
+				    end
+			    end
+		    end, Callbacks, Requests),
+    ?debug("Finished checking behaviour:~n~p", [{Reqs, Cbs}]),
+
+    Reqs1 = lists:sort(fun(A, B) ->
+			       A#request.line =< B#request.line
+		       end, Reqs),
+    {Reqs1, Cbs}.
+
+-spec callback_count_subtype(callback(), esub_type:type()) -> {ok, integer()} | none.
+callback_count_subtype(Cb, ReqTy) ->
+    Clauses = Cb#callback.clauses,
+    PayloadArg = Cb#callback.payload_arg,
+    callback_count_subtype1(Clauses, PayloadArg, ReqTy, {0, esub_type:t_void()}).
+
+callback_count_subtype1([], _ArgN, _Ty, {_N, _AccTy}) ->
+    none;
+callback_count_subtype1([Cl|Clauses], ArgN, ReqTy, {N, AccTy}) ->
+    ClauseType = lists:nth(ArgN, Cl#callback_clause.types),
+    Type = esub_type:t_or(ClauseType, AccTy),
+    case esub_type:subtype(ReqTy, Type) of
+	true -> {ok, N+1};
+	false -> callback_count_subtype1(Clauses, ArgN, ReqTy, {N+1, Type})
+    end.
+
+-spec callback_mark_used(callback(), integer()) -> callback().
+callback_mark_used(Cb, N) ->
+    Clauses = callback_mark_used1(Cb#callback.clauses, N, []),
+    Cb#callback { clauses = Clauses }.
+
+-spec callback_mark_used1([callback_clause()], integer(), [callback_clause()]) -> [callback_clause()].
+callback_mark_used1(Cls, 0, Acc) ->
+    lists:reverse(Acc) ++ Cls;
+callback_mark_used1([Cl|Cls], N, Acc) ->
+    Cl1 = callback_clause_mark_used(Cl),
+    callback_mark_used1(Cls, N-1, [Cl1|Acc]).
+
+callback_clause_mark_used(Clause) ->
+    Clause#callback_clause{ used = true }.
+
+request_mark_used(Request, N) ->
+    Request#request{ used = {true, N} }.
 
 
 %%==============================================================================
 %% Callback Helpers
 %%==============================================================================
-
--spec get_callbacks(atom(), cerl:c_module()) -> {[{fun_name(), [cerl:c_clause()]}], [fun_name()], [fun_name()]}.
-get_callbacks(Behaviour, Module) ->
-    Defs = c_module_defs(Module),
-    lists:foldl(fun({Name,Arg},{Ok,Undefined,Malformed}) ->
-		      case proplists:lookup(Name, Defs) of
-			  {Name, Body} ->
-			      case get_nth_fun_arg(Arg, Body) of
-				  {ok, Clauses} ->
-				      {[{Name,Clauses}|Ok],Undefined,Malformed};
-				  {error, _} ->
-				      {Ok, Undefined, [Name|Malformed]}
-			      end;
-			  none ->
-			      {Ok,[Name|Undefined],Malformed}
-		      end
-		end, {[],[],[]}, known_callbacks(Behaviour)).
-
--spec get_nth_fun_arg(cerl:c_fun(), integer()) -> errorable([{cerl:cerl(), cerl:cerl()}]).
-get_nth_fun_arg(N, Fun) ->
-    Body = cerl:fun_body(Fun),
-    case cerl:type(Body) of
-	'case' ->
-	    Clauses = cerl:case_clauses(Body),
-	    Args = lists:map(fun(Clause) ->
-				     get_nth_clause_arg(N, Clause)
-			     end, Clauses),
-	    lift_error(Args);
-	_ ->
-	    {error, top_level_not_case}
-    end.
-
--spec get_nth_clause_arg(cerl:c_clause(), integer()) -> errorable({cerl:cerl(), cerl:cerl()}).
-get_nth_clause_arg(N, Clause) ->
-    Pats = cerl:clause_pats(Clause),
-    case length(Pats) > N of
-	true ->
-	    {ok, {lists:nth(N, Pats), cerl:clause_guard(Clause)}};
-	false ->
-	    {error, not_enough_pats}
-    end.
-
-lift_error(Xs) ->
-    lists:foldl(fun(X0,Acc0) ->
-			case Acc0 of
-			    {ok, Acc} ->
-				case X0 of
-				    {ok, X} ->
-					{ok, [X|Acc]};
-				    {error, _} ->
-					X0
-				end;
-			    {error, _} ->
-				Acc0
-			end
-		end, {ok, []}, lists:reverse(Xs)).
-
-
--spec callback_to_clauses(cerl:c_fun()) -> {ok, [cerl:c_clause()]} | {error, term()}.
-callback_to_clauses(Fun) ->
-    Body = cerl:fun_body(Fun),
-    case cerl:type(Body) of
-	'case' ->
-
-	    {ok, cerl:case_clauses(Body)};
-	_ ->
-	    {error, top_level_not_case}
-    end.
 
 %%==============================================================================
 %% Core Erlang Helpers

@@ -1,4 +1,7 @@
 -module(esub).
+-define(debug, true).
+
+-include("esub_debug.hrl").
 
 -import(esub_log, [print/1,print/2,debug/1,debug/2,fatal/2]).
 
@@ -17,8 +20,9 @@
 %% escript Entry point
 main(Args) ->
     esub_log:start(),
+
     print("Esub v0.0.1~n"),
-    debug("Args: ~p", [Args]),
+    ?debug("Args: ~p", [Args]),
     [RawCmd|Args1] = Args,
     case parse_command(RawCmd) of
 	{ok, otp} ->
