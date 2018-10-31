@@ -49,7 +49,7 @@ main(Args) ->
 			io:format("        used: "),
 			case Req#request.used of
 			    {true, N} ->
-				io:format("true, within ~B clauses ~n", [N]);
+				io:format("true, using clauses ~p~n", [N]);
 			    false ->
 				io:format("false~n")
 			end
@@ -194,7 +194,9 @@ c_clause_to_callback_clause(CClause) ->
 c_def_to_callback({Name, Fun}) ->
     Case = cerl:fun_body(Fun),
     CClauses = cerl:case_clauses(Case),
-    Clauses = lists:map(fun c_clause_to_callback_clause/1, CClauses),
+    Clauses0 = lists:map(fun c_clause_to_callback_clause/1, CClauses),
+    %% TODO: more robust check for auto-generated final clause.
+    Clauses = lists:reverse(tl(lists:reverse(Clauses0))),
     #callback{
        name = Name,
        clauses = Clauses
@@ -242,15 +244,20 @@ check_behaviour(BehaviourName, Module) ->
 				    {Req, Cbs};
 				{ok, Cb} ->
 				    ReqType = Req#request.type,
+
 				    case callback_count_subtype(Cb, ReqType) of
-					{ok, Count} ->
-					    Req1 = request_mark_used(Req, Count),
-					    Cb1 = callback_mark_used(Cb, Count),
+					[] ->
+					    %% unchanged
+					    {Req, Cbs};
+					 ClauseIDXs ->
+					    ?debug("Line ~p:~p: ~p",
+						   [Req#request.line,
+						    Req#request.name,
+						    ClauseIDXs]),
+					    Req1 = request_mark_used(Req, ClauseIDXs),
+					    Cb1 = callback_mark_used(Cb, ClauseIDXs),
 					    Cbs1 = maps:update(CbName, Cb1, Cbs),
-					    {Req1, Cbs1};
-					none ->
-					    %% also unchanged
-					    {Req, Cbs}
+					    {Req1, Cbs1}
 				    end
 			    end
 		    end, Callbacks, Requests),
@@ -261,33 +268,58 @@ check_behaviour(BehaviourName, Module) ->
 		       end, Reqs),
     {Reqs1, Cbs}.
 
--spec callback_count_subtype(callback(), esub_type:type()) -> {ok, integer()} | none.
+-spec callback_count_subtype(callback(), esub_type:type()) -> [integer()].
 callback_count_subtype(Cb, ReqTy) ->
+    ?debug("Finding clauses used to match type ~s", [esub_type:format(ReqTy)]),
     Clauses = Cb#callback.clauses,
     PayloadArg = Cb#callback.payload_arg,
-    callback_count_subtype1(Clauses, PayloadArg, ReqTy, {0, esub_type:t_void()}).
+    callback_count_subtype1(Clauses, PayloadArg, ReqTy, {1, [], esub_type:t_void()}).
 
-callback_count_subtype1([], _ArgN, _Ty, {_N, _AccTy}) ->
-    none;
-callback_count_subtype1([Cl|Clauses], ArgN, ReqTy, {N, AccTy}) ->
+callback_count_subtype1([], _ArgN, _Ty, {_N, Used, _AccTy}) ->
+    Used;
+callback_count_subtype1([Cl|Clauses], ArgN, ReqTy, {N, Used, AccTy}) ->
+    %% check for overlap between clause and request type
+    %% if there is no overlap between the type of the request and the type of
+    %% the clause, then it is not possible for the clause to match the request
     ClauseType = lists:nth(ArgN, Cl#callback_clause.types),
-    Type = esub_type:t_or(ClauseType, AccTy),
-    case esub_type:subtype(ReqTy, Type) of
-	true -> {ok, N+1};
-	false -> callback_count_subtype1(Clauses, ArgN, ReqTy, {N+1, Type})
+    ?debug("Type of clause ~p on L~p is ~s", [N, Cl#callback_clause.line, esub_type:format(ClauseType)]),
+    Intersects = esub_type:dnf_plus(esub_type:t_and(ReqTy, ClauseType)),
+    ?debug("Intersections: ~s", [esub_type:format(Intersects)]),
+    case esub_type:is_void(Intersects) of
+	true ->
+	    ?debug("No intersections"),
+	    %% no overlap, so move on
+	    callback_count_subtype1(Clauses, ArgN, ReqTy, {N+1, Used, AccTy});
+	false ->
+	    Type = esub_type:t_or(ClauseType, AccTy),
+	    case esub_type:subtype(ReqTy, Type) of
+		true ->
+		    Res = [N|Used],
+		    ?debug("Found! ~p", [Res]),
+		    Res;
+		false ->
+		    ?debug("~s not a subtype of ~s",
+			   [esub_type:format(ReqTy), esub_type:format(Type)]),
+		    callback_count_subtype1(Clauses, ArgN, ReqTy, {N+1, [N|Used], Type})
+	    end
     end.
 
--spec callback_mark_used(callback(), integer()) -> callback().
-callback_mark_used(Cb, N) ->
-    Clauses = callback_mark_used1(Cb#callback.clauses, N, []),
+-spec callback_mark_used(callback(), [integer()]) -> callback().
+callback_mark_used(Cb, Ns) ->
+    Clauses = callback_mark_used1(Cb#callback.clauses, 1, Ns, []),
     Cb#callback { clauses = Clauses }.
 
--spec callback_mark_used1([callback_clause()], integer(), [callback_clause()]) -> [callback_clause()].
-callback_mark_used1(Cls, 0, Acc) ->
-    lists:reverse(Acc) ++ Cls;
-callback_mark_used1([Cl|Cls], N, Acc) ->
-    Cl1 = callback_clause_mark_used(Cl),
-    callback_mark_used1(Cls, N-1, [Cl1|Acc]).
+-spec callback_mark_used1([callback_clause()], integer(), [integer()], [callback_clause()]) -> [callback_clause()].
+callback_mark_used1([], _Count, _Ns, Acc) ->
+    lists:reverse(Acc);
+callback_mark_used1([Cl|Cls], Count, Ns, Acc) ->
+    Cl1 = case lists:member(Count, Ns) of
+	      true ->
+		  callback_clause_mark_used(Cl);
+	      false ->
+		  Cl
+	  end,
+    callback_mark_used1(Cls, Count+1, Ns, [Cl1|Acc]).
 
 callback_clause_mark_used(Clause) ->
     Clause#callback_clause{ used = true }.

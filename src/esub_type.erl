@@ -248,7 +248,6 @@ format(Ety) ->
 		    end,
 	    ["{", lists:join(", ", Elems), "}"];
 	singleton ->
-	    io:format("~w~n", [singleton_type(Ety)]),
 	    Type = format(singleton_type(Ety)),
 	    Val = io_lib:format("~w", [singleton_value(Ety)]),
 	    ["<", Val, ",", Type, ">"];

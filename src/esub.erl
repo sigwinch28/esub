@@ -7,7 +7,7 @@
 
 %% API exports
 -export([main/1]).
--export([c_pat_to_type/1,c_pat_to_type/2,c_guard_to_guard/1,guard_to_envs/1]).
+-export([c_pat_to_type/1,c_lit_to_type/1,c_pat_to_type/2,c_guard_to_guard/1,guard_to_envs/1]).
 
 %% Types
 -type var() :: term().
@@ -49,7 +49,6 @@ c_pat_to_type(Pattern, Gamma) ->
 	    esub_type:update_ann(src, Pattern, esub_type:t_tuple(Types));
 	'literal' ->
 	    Value = cerl:concrete(Pattern),
-	    debug("got concrete value: ~p", [Value]),
 	    Ty = c_lit_to_type(Value),
 	    esub_type:update_ann(src,Pattern, Ty)
     end.
